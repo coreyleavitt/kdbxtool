@@ -285,16 +285,22 @@ class Kdbx4Reader:
         return b"".join(blocks)
 
     def _remove_pkcs7_padding(self, data: bytes) -> bytes:
-        """Remove PKCS7 padding from decrypted data."""
+        """Remove PKCS7 padding from decrypted data.
+
+        Note: Padding oracle attacks are not possible here because HMAC
+        verification on the ciphertext occurs BEFORE decryption. Any
+        ciphertext modification would fail HMAC verification first.
+        We still use generic error messages for defense-in-depth.
+        """
         if not data:
-            raise ValueError("Empty data cannot have PKCS7 padding")
+            raise ValueError("Decryption failed - invalid payload")
         padding_len = data[-1]
         if padding_len == 0 or padding_len > 16:
-            raise ValueError(f"Invalid PKCS7 padding length: {padding_len}")
+            raise ValueError("Decryption failed - invalid payload")
         # Verify all padding bytes are correct
         for i in range(1, padding_len + 1):
             if data[-i] != padding_len:
-                raise ValueError("Invalid PKCS7 padding")
+                raise ValueError("Decryption failed - invalid payload")
         return data[:-padding_len]
 
     def _parse_inner_header(self, data: bytes) -> tuple[InnerHeader, int]:

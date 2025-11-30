@@ -357,6 +357,10 @@ class Database:
         # Create root group
         root_group = Group.create_root(database_name)
 
+        # Create recycle bin group
+        recycle_bin = Group(name="Recycle Bin", icon_id="43")
+        root_group.add_subgroup(recycle_bin)
+
         # Create default header
         header = KdbxHeader(
             version=KdbxVersion.KDBX4,
@@ -378,7 +382,11 @@ class Database:
             binaries={},
         )
 
-        settings = DatabaseSettings(database_name=database_name)
+        settings = DatabaseSettings(
+            database_name=database_name,
+            recycle_bin_enabled=True,
+            recycle_bin_uuid=recycle_bin.uuid,
+        )
 
         db = cls(
             root_group=root_group,

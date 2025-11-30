@@ -235,7 +235,7 @@ class TestDatabaseSearch:
     def test_iter_groups(self, populated_db: Database) -> None:
         """Test iterating all groups."""
         groups = list(populated_db.iter_groups())
-        assert len(groups) == 2  # Work and Personal (not root)
+        assert len(groups) == 3  # Recycle Bin, Work, Personal (not root)
 
 
 class TestDatabaseCredentials:
@@ -361,7 +361,7 @@ class TestDatabaseStr:
         s = str(db)
         assert "My Database" in s
         assert "1 entries" in s
-        assert "1 groups" in s
+        assert "2 groups" in s  # Group1 + Recycle Bin
 
 
 class TestProtectedStreamCipher:

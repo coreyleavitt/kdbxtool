@@ -10,14 +10,18 @@ This module provides the main interface for working with KeePass databases:
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import os
 import uuid as uuid_module
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from types import TracebackType
 from typing import TYPE_CHECKING, Iterator, Optional, Union
-from defusedxml import ElementTree as ET
+from xml.etree.ElementTree import Element, SubElement, tostring
+
+from defusedxml import ElementTree as DefusedET
 
 from Cryptodome.Cipher import ChaCha20, Salsa20
 
@@ -557,7 +561,7 @@ class Database:
         Returns:
             Tuple of (root_group, settings, binaries)
         """
-        root = ET.fromstring(xml_data)
+        root = DefusedET.fromstring(xml_data)
 
         # Decrypt protected values in-place before parsing
         if inner_header is not None:
@@ -584,7 +588,7 @@ class Database:
         return root_group, settings, binaries
 
     @classmethod
-    def _decrypt_protected_values(cls, root: ET.Element, inner_header: InnerHeader) -> None:
+    def _decrypt_protected_values(cls, root: Element, inner_header: InnerHeader) -> None:
         """Decrypt all protected values in the XML tree in document order.
 
         Protected values are XOR'd with a stream cipher and base64 encoded.
@@ -602,12 +606,12 @@ class Database:
                     ciphertext = base64.b64decode(elem.text)
                     plaintext = cipher.decrypt(ciphertext)
                     elem.text = plaintext.decode("utf-8")
-                except Exception:
+                except (binascii.Error, ValueError, UnicodeDecodeError):
                     # If decryption fails, leave as-is
                     pass
 
     @classmethod
-    def _parse_meta(cls, meta_elem: Optional[ET.Element]) -> DatabaseSettings:
+    def _parse_meta(cls, meta_elem: Optional[Element]) -> DatabaseSettings:
         """Parse Meta element into DatabaseSettings."""
         settings = DatabaseSettings()
 
@@ -643,13 +647,13 @@ class Database:
                 settings.recycle_bin_uuid = uuid_module.UUID(
                     bytes=base64.b64decode(rb_uuid)
                 )
-            except Exception:
+            except (binascii.Error, ValueError):
                 pass
 
         return settings
 
     @classmethod
-    def _parse_group(cls, elem: ET.Element) -> Group:
+    def _parse_group(cls, elem: Element) -> Group:
         """Parse a Group element into a Group model."""
         group = Group()
 
@@ -689,7 +693,7 @@ class Database:
         return group
 
     @classmethod
-    def _parse_entry(cls, elem: ET.Element) -> Entry:
+    def _parse_entry(cls, elem: Element) -> Entry:
         """Parse an Entry element into an Entry model."""
         entry = Entry()
 
@@ -761,7 +765,7 @@ class Database:
         return entry
 
     @classmethod
-    def _parse_times(cls, times_elem: Optional[ET.Element]) -> Times:
+    def _parse_times(cls, times_elem: Optional[Element]) -> Times:
         """Parse Times element into Times model."""
         times = Times.create_new()
 
@@ -843,14 +847,14 @@ class Database:
 
     def _build_xml(self) -> bytes:
         """Build KDBX XML from models."""
-        root = ET.Element("KeePassFile")
+        root = Element("KeePassFile")
 
         # Meta section
-        meta = ET.SubElement(root, "Meta")
+        meta = SubElement(root, "Meta")
         self._build_meta(meta)
 
         # Root section
-        root_elem = ET.SubElement(root, "Root")
+        root_elem = SubElement(root, "Root")
         self._build_group(root_elem, self._root_group)
 
         # Encrypt protected values before serializing
@@ -858,9 +862,9 @@ class Database:
             self._encrypt_protected_values(root, self._inner_header)
 
         # Serialize to bytes
-        return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        return tostring(root, encoding="utf-8", xml_declaration=True)
 
-    def _encrypt_protected_values(self, root: ET.Element, inner_header: InnerHeader) -> None:
+    def _encrypt_protected_values(self, root: Element, inner_header: InnerHeader) -> None:
         """Encrypt all protected values in the XML tree in document order.
 
         Protected values are XOR'd with a stream cipher and base64 encoded.
@@ -878,62 +882,62 @@ class Database:
                 ciphertext = cipher.encrypt(plaintext)
                 elem.text = base64.b64encode(ciphertext).decode("ascii")
 
-    def _build_meta(self, meta: ET.Element) -> None:
+    def _build_meta(self, meta: Element) -> None:
         """Build Meta element from settings."""
         s = self._settings
 
-        ET.SubElement(meta, "Generator").text = s.generator
-        ET.SubElement(meta, "DatabaseName").text = s.database_name
+        SubElement(meta, "Generator").text = s.generator
+        SubElement(meta, "DatabaseName").text = s.database_name
         if s.database_description:
-            ET.SubElement(meta, "DatabaseDescription").text = s.database_description
+            SubElement(meta, "DatabaseDescription").text = s.database_description
         if s.default_username:
-            ET.SubElement(meta, "DefaultUserName").text = s.default_username
+            SubElement(meta, "DefaultUserName").text = s.default_username
 
-        ET.SubElement(meta, "MaintenanceHistoryDays").text = str(s.maintenance_history_days)
-        ET.SubElement(meta, "MasterKeyChangeRec").text = str(s.master_key_change_rec)
-        ET.SubElement(meta, "MasterKeyChangeForce").text = str(s.master_key_change_force)
+        SubElement(meta, "MaintenanceHistoryDays").text = str(s.maintenance_history_days)
+        SubElement(meta, "MasterKeyChangeRec").text = str(s.master_key_change_rec)
+        SubElement(meta, "MasterKeyChangeForce").text = str(s.master_key_change_force)
 
         # Memory protection
-        mp = ET.SubElement(meta, "MemoryProtection")
+        mp = SubElement(meta, "MemoryProtection")
         for field, protected in s.memory_protection.items():
-            ET.SubElement(mp, f"Protect{field}").text = str(protected)
+            SubElement(mp, f"Protect{field}").text = str(protected)
 
-        ET.SubElement(meta, "RecycleBinEnabled").text = str(s.recycle_bin_enabled)
+        SubElement(meta, "RecycleBinEnabled").text = str(s.recycle_bin_enabled)
         if s.recycle_bin_uuid:
-            ET.SubElement(meta, "RecycleBinUUID").text = base64.b64encode(
+            SubElement(meta, "RecycleBinUUID").text = base64.b64encode(
                 s.recycle_bin_uuid.bytes
             ).decode("ascii")
         else:
             # Empty UUID
-            ET.SubElement(meta, "RecycleBinUUID").text = base64.b64encode(
+            SubElement(meta, "RecycleBinUUID").text = base64.b64encode(
                 b"\x00" * 16
             ).decode("ascii")
 
-        ET.SubElement(meta, "HistoryMaxItems").text = str(s.history_max_items)
-        ET.SubElement(meta, "HistoryMaxSize").text = str(s.history_max_size)
+        SubElement(meta, "HistoryMaxItems").text = str(s.history_max_items)
+        SubElement(meta, "HistoryMaxSize").text = str(s.history_max_size)
 
-    def _build_group(self, parent: ET.Element, group: Group) -> None:
+    def _build_group(self, parent: Element, group: Group) -> None:
         """Build Group element from Group model."""
-        elem = ET.SubElement(parent, "Group")
+        elem = SubElement(parent, "Group")
 
-        ET.SubElement(elem, "UUID").text = base64.b64encode(group.uuid.bytes).decode("ascii")
-        ET.SubElement(elem, "Name").text = group.name or ""
+        SubElement(elem, "UUID").text = base64.b64encode(group.uuid.bytes).decode("ascii")
+        SubElement(elem, "Name").text = group.name or ""
         if group.notes:
-            ET.SubElement(elem, "Notes").text = group.notes
-        ET.SubElement(elem, "IconID").text = group.icon_id
+            SubElement(elem, "Notes").text = group.notes
+        SubElement(elem, "IconID").text = group.icon_id
 
         self._build_times(elem, group.times)
 
-        ET.SubElement(elem, "IsExpanded").text = str(group.is_expanded)
+        SubElement(elem, "IsExpanded").text = str(group.is_expanded)
 
         if group.default_autotype_sequence:
-            ET.SubElement(elem, "DefaultAutoTypeSequence").text = group.default_autotype_sequence
+            SubElement(elem, "DefaultAutoTypeSequence").text = group.default_autotype_sequence
         if group.enable_autotype is not None:
-            ET.SubElement(elem, "EnableAutoType").text = str(group.enable_autotype)
+            SubElement(elem, "EnableAutoType").text = str(group.enable_autotype)
         if group.enable_searching is not None:
-            ET.SubElement(elem, "EnableSearching").text = str(group.enable_searching)
+            SubElement(elem, "EnableSearching").text = str(group.enable_searching)
 
-        ET.SubElement(elem, "LastTopVisibleEntry").text = base64.b64encode(
+        SubElement(elem, "LastTopVisibleEntry").text = base64.b64encode(
             (group.last_top_visible_entry or uuid_module.UUID(int=0)).bytes
         ).decode("ascii")
 
@@ -945,74 +949,74 @@ class Database:
         for subgroup in group.subgroups:
             self._build_group(elem, subgroup)
 
-    def _build_entry(self, parent: ET.Element, entry: Entry) -> None:
+    def _build_entry(self, parent: Element, entry: Entry) -> None:
         """Build Entry element from Entry model."""
-        elem = ET.SubElement(parent, "Entry")
+        elem = SubElement(parent, "Entry")
 
-        ET.SubElement(elem, "UUID").text = base64.b64encode(entry.uuid.bytes).decode("ascii")
-        ET.SubElement(elem, "IconID").text = entry.icon_id
+        SubElement(elem, "UUID").text = base64.b64encode(entry.uuid.bytes).decode("ascii")
+        SubElement(elem, "IconID").text = entry.icon_id
 
         if entry.foreground_color:
-            ET.SubElement(elem, "ForegroundColor").text = entry.foreground_color
+            SubElement(elem, "ForegroundColor").text = entry.foreground_color
         if entry.background_color:
-            ET.SubElement(elem, "BackgroundColor").text = entry.background_color
+            SubElement(elem, "BackgroundColor").text = entry.background_color
         if entry.override_url:
-            ET.SubElement(elem, "OverrideURL").text = entry.override_url
+            SubElement(elem, "OverrideURL").text = entry.override_url
 
         if entry.tags:
-            ET.SubElement(elem, "Tags").text = ";".join(entry.tags)
+            SubElement(elem, "Tags").text = ";".join(entry.tags)
 
         self._build_times(elem, entry.times)
 
         # String fields
         for key, field in entry.strings.items():
-            string_elem = ET.SubElement(elem, "String")
-            ET.SubElement(string_elem, "Key").text = key
-            value_elem = ET.SubElement(string_elem, "Value")
+            string_elem = SubElement(elem, "String")
+            SubElement(string_elem, "Key").text = key
+            value_elem = SubElement(string_elem, "Value")
             value_elem.text = field.value or ""
             if field.protected:
                 value_elem.set("Protected", "True")
 
         # Binary references
         for binary_ref in entry.binaries:
-            binary_elem = ET.SubElement(elem, "Binary")
-            ET.SubElement(binary_elem, "Key").text = binary_ref.key
-            value_elem = ET.SubElement(binary_elem, "Value")
+            binary_elem = SubElement(elem, "Binary")
+            SubElement(binary_elem, "Key").text = binary_ref.key
+            value_elem = SubElement(binary_elem, "Value")
             value_elem.set("Ref", str(binary_ref.ref))
 
         # AutoType
         at = entry.autotype
-        at_elem = ET.SubElement(elem, "AutoType")
-        ET.SubElement(at_elem, "Enabled").text = str(at.enabled)
-        ET.SubElement(at_elem, "DataTransferObfuscation").text = str(at.obfuscation)
-        ET.SubElement(at_elem, "DefaultSequence").text = at.sequence or ""
+        at_elem = SubElement(elem, "AutoType")
+        SubElement(at_elem, "Enabled").text = str(at.enabled)
+        SubElement(at_elem, "DataTransferObfuscation").text = str(at.obfuscation)
+        SubElement(at_elem, "DefaultSequence").text = at.sequence or ""
 
         if at.window:
-            assoc = ET.SubElement(at_elem, "Association")
-            ET.SubElement(assoc, "Window").text = at.window
-            ET.SubElement(assoc, "KeystrokeSequence").text = ""
+            assoc = SubElement(at_elem, "Association")
+            SubElement(assoc, "Window").text = at.window
+            SubElement(assoc, "KeystrokeSequence").text = ""
 
         # History
         if entry.history:
-            history_elem = ET.SubElement(elem, "History")
+            history_elem = SubElement(elem, "History")
             for hist_entry in entry.history:
                 self._build_entry(history_elem, hist_entry)
 
-    def _build_times(self, parent: ET.Element, times: Times) -> None:
+    def _build_times(self, parent: Element, times: Times) -> None:
         """Build Times element from Times model."""
-        elem = ET.SubElement(parent, "Times")
+        elem = SubElement(parent, "Times")
 
-        ET.SubElement(elem, "CreationTime").text = self._encode_time(times.creation_time)
-        ET.SubElement(elem, "LastModificationTime").text = self._encode_time(times.last_modification_time)
-        ET.SubElement(elem, "LastAccessTime").text = self._encode_time(times.last_access_time)
+        SubElement(elem, "CreationTime").text = self._encode_time(times.creation_time)
+        SubElement(elem, "LastModificationTime").text = self._encode_time(times.last_modification_time)
+        SubElement(elem, "LastAccessTime").text = self._encode_time(times.last_access_time)
         if times.expiry_time:
-            ET.SubElement(elem, "ExpiryTime").text = self._encode_time(times.expiry_time)
+            SubElement(elem, "ExpiryTime").text = self._encode_time(times.expiry_time)
         else:
-            ET.SubElement(elem, "ExpiryTime").text = self._encode_time(times.creation_time)
-        ET.SubElement(elem, "Expires").text = str(times.expires)
-        ET.SubElement(elem, "UsageCount").text = str(times.usage_count)
+            SubElement(elem, "ExpiryTime").text = self._encode_time(times.creation_time)
+        SubElement(elem, "Expires").text = str(times.expires)
+        SubElement(elem, "UsageCount").text = str(times.usage_count)
         if times.location_changed:
-            ET.SubElement(elem, "LocationChanged").text = self._encode_time(times.location_changed)
+            SubElement(elem, "LocationChanged").text = self._encode_time(times.location_changed)
 
     def __str__(self) -> str:
         entry_count = sum(1 for _ in self.iter_entries())

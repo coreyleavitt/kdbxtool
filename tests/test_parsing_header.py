@@ -166,13 +166,13 @@ class TestKdbxHeaderParsing:
         assert consumed > 0
 
     def test_parse_chacha20_cipher(self) -> None:
-        """Test parsing header with ChaCha20-Poly1305 cipher."""
+        """Test parsing header with ChaCha20 cipher."""
         header_data = self._build_kdbx4_header(
-            cipher=Cipher.CHACHA20_POLY1305,
+            cipher=Cipher.CHACHA20,
             encryption_iv=b"\x00" * 12,  # 12-byte nonce
         )
         header, _ = KdbxHeader.parse(header_data)
-        assert header.cipher == Cipher.CHACHA20_POLY1305
+        assert header.cipher == Cipher.CHACHA20
         assert len(header.encryption_iv) == 12
 
     def test_parse_no_compression(self) -> None:
@@ -274,12 +274,12 @@ class TestKdbxHeaderSerialization:
         assert parsed.argon2_parallelism == original.argon2_parallelism
 
     def test_roundtrip_chacha20(self) -> None:
-        """Test roundtrip with ChaCha20-Poly1305."""
+        """Test roundtrip with ChaCha20."""
         import os
 
         original = KdbxHeader(
             version=KdbxVersion.KDBX4,
-            cipher=Cipher.CHACHA20_POLY1305,
+            cipher=Cipher.CHACHA20,
             compression=CompressionType.NONE,
             master_seed=os.urandom(32),
             encryption_iv=os.urandom(12),
@@ -293,7 +293,7 @@ class TestKdbxHeaderSerialization:
         serialized = original.to_bytes()
         parsed, _ = KdbxHeader.parse(serialized)
 
-        assert parsed.cipher == Cipher.CHACHA20_POLY1305
+        assert parsed.cipher == Cipher.CHACHA20
         assert parsed.kdf_type == KdfType.ARGON2D
         assert parsed.argon2_memory_kib == 32768
 

@@ -15,7 +15,7 @@ import os
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from Cryptodome.Cipher import AES, ChaCha20_Poly1305
+from Cryptodome.Cipher import AES, ChaCha20
 
 if TYPE_CHECKING:
     from .memory import SecureBytes
@@ -26,13 +26,16 @@ class Cipher(Enum):
 
     KDBX4 supports two ciphers:
     - AES-256-CBC: Traditional cipher, widely supported
-    - ChaCha20-Poly1305: Modern AEAD cipher, faster in software
+    - ChaCha20: Modern stream cipher, faster in software
+
+    Note: KDBX uses plain ChaCha20, not ChaCha20-Poly1305.
+    Authentication is provided by the HMAC block stream.
 
     The UUID values are defined in the KDBX specification.
     """
 
     AES256_CBC = bytes.fromhex("31c1f2e6bf714350be5805216afc5aff")
-    CHACHA20_POLY1305 = bytes.fromhex("d6038a2b8b6f4cb5a524339a31dbb59a")
+    CHACHA20 = bytes.fromhex("d6038a2b8b6f4cb5a524339a31dbb59a")
 
     @property
     def key_size(self) -> int:
@@ -44,14 +47,14 @@ class Cipher(Enum):
         """Return the IV/nonce size in bytes for this cipher."""
         if self == Cipher.AES256_CBC:
             return 16  # AES block size
-        return 12  # ChaCha20-Poly1305 nonce
+        return 12  # ChaCha20 nonce
 
     @property
     def display_name(self) -> str:
         """Human-readable cipher name."""
         if self == Cipher.AES256_CBC:
             return "AES-256-CBC"
-        return "ChaCha20-Poly1305"
+        return "ChaCha20"
 
     @classmethod
     def from_uuid(cls, uuid_bytes: bytes) -> Cipher:
@@ -167,47 +170,36 @@ class CipherContext:
         """Encrypt plaintext data.
 
         For AES-CBC, data must be padded to block size.
-        For ChaCha20-Poly1305, returns ciphertext || 16-byte tag.
+        For ChaCha20, returns stream-encrypted ciphertext (same length as input).
 
         Args:
             plaintext: Data to encrypt
 
         Returns:
-            Encrypted data (format depends on cipher)
+            Encrypted data (same length as input for ChaCha20)
         """
         if self._cipher == Cipher.AES256_CBC:
             cipher = AES.new(self._key, AES.MODE_CBC, iv=self._iv)
             return cipher.encrypt(plaintext)
         else:
-            cipher = ChaCha20_Poly1305.new(key=self._key, nonce=self._iv)
-            ciphertext, tag = cipher.encrypt_and_digest(plaintext)
-            return ciphertext + tag
+            cipher = ChaCha20.new(key=self._key, nonce=self._iv)
+            return cipher.encrypt(plaintext)
 
     def decrypt(self, ciphertext: bytes) -> bytes:
         """Decrypt ciphertext data.
 
         For AES-CBC, returns decrypted data (caller must remove padding).
-        For ChaCha20-Poly1305, verifies and strips the 16-byte tag.
+        For ChaCha20, returns stream-decrypted plaintext.
 
         Args:
             ciphertext: Data to decrypt
 
         Returns:
             Decrypted plaintext
-
-        Raises:
-            ValueError: If authentication fails (ChaCha20-Poly1305 only)
         """
         if self._cipher == Cipher.AES256_CBC:
             cipher = AES.new(self._key, AES.MODE_CBC, iv=self._iv)
             return cipher.decrypt(ciphertext)
         else:
-            # Last 16 bytes are the authentication tag
-            if len(ciphertext) < 16:
-                raise ValueError("Ciphertext too short for ChaCha20-Poly1305")
-            data, tag = ciphertext[:-16], ciphertext[-16:]
-            cipher = ChaCha20_Poly1305.new(key=self._key, nonce=self._iv)
-            try:
-                return cipher.decrypt_and_verify(data, tag)
-            except ValueError as e:
-                raise ValueError("Authentication failed: ciphertext was tampered") from e
+            cipher = ChaCha20.new(key=self._key, nonce=self._iv)
+            return cipher.decrypt(ciphertext)

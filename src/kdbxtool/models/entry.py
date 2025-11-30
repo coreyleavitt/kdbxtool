@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid as uuid_module
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from .times import Times
@@ -287,7 +288,7 @@ class Entry:
         tags: Optional[list[str]] = None,
         icon_id: str = "0",
         expires: bool = False,
-        expiry_time: Optional[object] = None,  # datetime
+        expiry_time: datetime | None = None,
     ) -> Entry:
         """Create a new entry with common fields.
 

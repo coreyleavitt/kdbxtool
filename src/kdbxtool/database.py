@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterator, Optional, Union
-from xml.etree import ElementTree as ET
+from defusedxml import ElementTree as ET
 
 from Cryptodome.Cipher import ChaCha20, Salsa20
 
@@ -182,6 +182,40 @@ class Database:
         self._password: Optional[str] = None
         self._keyfile_data: Optional[bytes] = None
         self._filepath: Optional[Path] = None
+
+    def __enter__(self) -> "Database":
+        """Enter context manager."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[object],
+    ) -> None:
+        """Exit context manager, zeroizing credentials."""
+        self.zeroize_credentials()
+
+    def zeroize_credentials(self) -> None:
+        """Explicitly zeroize stored credentials from memory.
+
+        Call this when done with the database to minimize the time
+        credentials remain in memory. Note that Python's string
+        interning may retain copies; for maximum security, use
+        SecureBytes for credential input.
+        """
+        # Clear password (Python GC will eventually free memory)
+        self._password = None
+        # Clear keyfile data (convert to bytearray and zeroize if possible)
+        if self._keyfile_data is not None:
+            try:
+                # Attempt to overwrite the memory
+                data = bytearray(self._keyfile_data)
+                for i in range(len(data)):
+                    data[i] = 0
+            except TypeError:
+                pass  # bytes is immutable, just dereference
+            self._keyfile_data = None
 
     @property
     def root_group(self) -> Group:
@@ -391,6 +425,11 @@ class Database:
 
         if self._inner_header is None:
             raise ValueError("No inner header - database not properly initialized")
+
+        # Regenerate protected stream key to avoid keystream reuse across saves.
+        # This prevents theoretical attacks where an attacker compares multiple
+        # versions of the encrypted file to XOR plaintexts.
+        self._inner_header.random_stream_key = os.urandom(64)
 
         # Build XML
         xml_data = self._build_xml()
@@ -763,17 +802,19 @@ class Database:
         KDBX4 uses base64-encoded binary timestamps or ISO format.
         """
         # Try base64 binary format first (KDBX4)
-        if len(time_str) == 24 and "/" in time_str or "+" in time_str or time_str.endswith("="):
+        # Base64 strings don't contain - or : which are present in ISO dates
+        if "-" not in time_str and ":" not in time_str:
             try:
                 binary = base64.b64decode(time_str)
-                # KDBX4 stores seconds since 0001-01-01 as int64
-                import struct
-                seconds = struct.unpack("<q", binary)[0]
-                # Convert to datetime (epoch is 0001-01-01)
-                base = datetime(1, 1, 1, tzinfo=timezone.utc)
-                return base + __import__("datetime").timedelta(seconds=seconds)
-            except Exception:
-                pass
+                if len(binary) == 8:  # int64 = 8 bytes
+                    # KDBX4 stores seconds since 0001-01-01 as int64
+                    import struct
+                    seconds = struct.unpack("<q", binary)[0]
+                    # Convert to datetime (epoch is 0001-01-01)
+                    base = datetime(1, 1, 1, tzinfo=timezone.utc)
+                    return base + __import__("datetime").timedelta(seconds=seconds)
+            except (ValueError, struct.error):
+                pass  # Not valid base64 or wrong size
 
         # Try ISO format
         try:

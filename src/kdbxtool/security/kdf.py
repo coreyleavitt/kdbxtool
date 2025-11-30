@@ -21,6 +21,7 @@ import argon2
 from argon2.low_level import Type as Argon2Type
 from argon2.low_level import hash_secret_raw
 
+from .crypto import constant_time_compare
 from .memory import SecureBytes
 
 if TYPE_CHECKING:
@@ -271,7 +272,7 @@ def _process_keyfile(keyfile_data: bytes) -> bytes:
     # Try parsing as XML keyfile
     try:
         import base64
-        import xml.etree.ElementTree as ET
+        import defusedxml.ElementTree as ET
 
         tree = ET.fromstring(keyfile_data)
         version_elem = tree.find("Meta/Version")
@@ -286,11 +287,11 @@ def _process_keyfile(keyfile_data: bytes) -> bytes:
                 # Version 2.0: hex encoded with hash verification
                 key_hex = (data_elem.text or "").strip()
                 key_bytes = bytes.fromhex(key_hex)
-                # Verify hash if present
+                # Verify hash if present (constant-time comparison)
                 if "Hash" in data_elem.attrib:
                     expected_hash = bytes.fromhex(data_elem.attrib["Hash"])
                     computed_hash = hashlib.sha256(key_bytes).digest()[:4]
-                    if expected_hash != computed_hash:
+                    if not constant_time_compare(expected_hash, computed_hash):
                         raise ValueError("Keyfile hash verification failed")
                 return key_bytes
     except (ET.ParseError, ValueError, AttributeError):

@@ -10,6 +10,7 @@ This module provides the main interface for working with KeePass databases:
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 import uuid as uuid_module
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterator, Optional, Union
 from xml.etree import ElementTree as ET
+
+from Cryptodome.Cipher import ChaCha20, Salsa20
 
 from .models import Entry, Group, HistoryEntry, Times
 from .models.entry import AutoType, BinaryRef, StringField
@@ -35,6 +38,54 @@ if TYPE_CHECKING:
 
 # KDBX4 time format (ISO 8601 with base64 encoding for binary times)
 KDBX4_TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+# Protected stream cipher IDs
+PROTECTED_STREAM_SALSA20 = 2
+PROTECTED_STREAM_CHACHA20 = 3
+
+
+class ProtectedStreamCipher:
+    """Stream cipher for encrypting/decrypting protected values in XML.
+
+    KDBX uses a stream cipher (ChaCha20 or Salsa20) to protect sensitive
+    values like passwords in the XML payload. Each protected value is
+    XOR'd with the cipher output in document order.
+    """
+
+    def __init__(self, stream_id: int, stream_key: bytes) -> None:
+        """Initialize the stream cipher.
+
+        Args:
+            stream_id: Cipher type (2=Salsa20, 3=ChaCha20)
+            stream_key: Key material from inner header (typically 64 bytes)
+        """
+        self._stream_id = stream_id
+        self._stream_key = stream_key
+        self._cipher = self._create_cipher()
+
+    def _create_cipher(self) -> object:
+        """Create the appropriate cipher based on stream_id."""
+        if self._stream_id == PROTECTED_STREAM_CHACHA20:
+            # ChaCha20: SHA-512 of key, first 32 bytes = key, bytes 32-44 = nonce
+            key_hash = hashlib.sha512(self._stream_key).digest()
+            key = key_hash[:32]
+            nonce = key_hash[32:44]
+            return ChaCha20.new(key=key, nonce=nonce)
+        elif self._stream_id == PROTECTED_STREAM_SALSA20:
+            # Salsa20: SHA-256 of key, fixed nonce
+            key = hashlib.sha256(self._stream_key).digest()
+            nonce = b'\xE8\x30\x09\x4B\x97\x20\x5D\x2A'
+            return Salsa20.new(key=key, nonce=nonce)
+        else:
+            raise ValueError(f"Unknown protected stream cipher ID: {self._stream_id}")
+
+    def decrypt(self, ciphertext: bytes) -> bytes:
+        """Decrypt protected value (XOR with stream)."""
+        return self._cipher.decrypt(ciphertext)
+
+    def encrypt(self, plaintext: bytes) -> bytes:
+        """Encrypt protected value (XOR with stream)."""
+        return self._cipher.encrypt(plaintext)
 
 
 @dataclass
@@ -212,8 +263,10 @@ class Database:
         # Decrypt the file
         payload = read_kdbx4(data, password=password, keyfile_data=keyfile_data)
 
-        # Parse XML into models
-        root_group, settings, binaries = cls._parse_xml(payload.xml_data)
+        # Parse XML into models (with protected value decryption)
+        root_group, settings, binaries = cls._parse_xml(
+            payload.xml_data, payload.inner_header
+        )
 
         db = cls(
             root_group=root_group,
@@ -454,17 +507,22 @@ class Database:
 
     @classmethod
     def _parse_xml(
-        cls, xml_data: bytes
+        cls, xml_data: bytes, inner_header: Optional[InnerHeader] = None
     ) -> tuple[Group, DatabaseSettings, dict[int, bytes]]:
         """Parse KDBX XML into models.
 
         Args:
             xml_data: XML payload bytes
+            inner_header: Inner header with stream cipher info (for decrypting protected values)
 
         Returns:
             Tuple of (root_group, settings, binaries)
         """
         root = ET.fromstring(xml_data)
+
+        # Decrypt protected values in-place before parsing
+        if inner_header is not None:
+            cls._decrypt_protected_values(root, inner_header)
 
         # Parse Meta section for settings
         settings = cls._parse_meta(root.find("Meta"))
@@ -485,6 +543,29 @@ class Database:
         binaries: dict[int, bytes] = {}
 
         return root_group, settings, binaries
+
+    @classmethod
+    def _decrypt_protected_values(cls, root: ET.Element, inner_header: InnerHeader) -> None:
+        """Decrypt all protected values in the XML tree in document order.
+
+        Protected values are XOR'd with a stream cipher and base64 encoded.
+        This method decrypts them in-place.
+        """
+        cipher = ProtectedStreamCipher(
+            inner_header.random_stream_id,
+            inner_header.random_stream_key,
+        )
+
+        # Find all Value elements with Protected="True" in document order
+        for elem in root.iter("Value"):
+            if elem.get("Protected") == "True" and elem.text:
+                try:
+                    ciphertext = base64.b64decode(elem.text)
+                    plaintext = cipher.decrypt(ciphertext)
+                    elem.text = plaintext.decode("utf-8")
+                except Exception:
+                    # If decryption fails, leave as-is
+                    pass
 
     @classmethod
     def _parse_meta(cls, meta_elem: Optional[ET.Element]) -> DatabaseSettings:
@@ -731,8 +812,30 @@ class Database:
         root_elem = ET.SubElement(root, "Root")
         self._build_group(root_elem, self._root_group)
 
+        # Encrypt protected values before serializing
+        if self._inner_header is not None:
+            self._encrypt_protected_values(root, self._inner_header)
+
         # Serialize to bytes
         return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+    def _encrypt_protected_values(self, root: ET.Element, inner_header: InnerHeader) -> None:
+        """Encrypt all protected values in the XML tree in document order.
+
+        Protected values are XOR'd with a stream cipher and base64 encoded.
+        This method encrypts them in-place.
+        """
+        cipher = ProtectedStreamCipher(
+            inner_header.random_stream_id,
+            inner_header.random_stream_key,
+        )
+
+        # Find all Value elements with Protected="True" in document order
+        for elem in root.iter("Value"):
+            if elem.get("Protected") == "True":
+                plaintext = (elem.text or "").encode("utf-8")
+                ciphertext = cipher.encrypt(plaintext)
+                elem.text = base64.b64encode(ciphertext).decode("ascii")
 
     def _build_meta(self, meta: ET.Element) -> None:
         """Build Meta element from settings."""

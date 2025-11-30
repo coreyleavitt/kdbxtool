@@ -243,13 +243,15 @@ def derive_key_aes_kdf(
         block2 = bytearray(cipher.encrypt(bytes(block2)))
 
     # Combine and hash
-    combined = bytes(block1) + bytes(block2)
+    combined = bytearray(bytes(block1) + bytes(block2))
     derived = hashlib.sha256(combined).digest()
 
-    # Zeroize intermediate values
+    # Zeroize all intermediate values
     for i in range(16):
         block1[i] = 0
         block2[i] = 0
+    for i in range(32):
+        combined[i] = 0
 
     return SecureBytes(derived)
 

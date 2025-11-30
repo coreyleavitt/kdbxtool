@@ -49,6 +49,10 @@ from .header import (
 if TYPE_CHECKING:
     pass
 
+# Maximum size for a single binary attachment (512 MiB)
+# Prevents memory exhaustion from malicious KDBX files
+MAX_BINARY_SIZE = 512 * 1024 * 1024
+
 
 @dataclass(slots=True)
 class InnerHeader:
@@ -347,8 +351,14 @@ class Kdbx4Reader:
                 random_stream_key = field_data
             elif field_type == InnerHeaderFieldType.BINARY:
                 # First byte is protection flag
+                binary_data = field_data[1:]
+                if len(binary_data) > MAX_BINARY_SIZE:
+                    raise ValueError(
+                        f"Binary attachment too large: {len(binary_data)} bytes "
+                        f"(max {MAX_BINARY_SIZE} bytes)"
+                    )
                 protected = field_data[0] != 0
-                binaries[binary_index] = (protected, field_data[1:])
+                binaries[binary_index] = (protected, binary_data)
                 binary_index += 1
 
         return (

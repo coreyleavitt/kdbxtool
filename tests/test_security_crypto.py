@@ -136,12 +136,12 @@ class TestCipherEnum:
         assert cipher.iv_size == 16
         assert cipher.display_name == "AES-256-CBC"
 
-    def test_chacha20_poly1305_properties(self) -> None:
-        """Test ChaCha20-Poly1305 cipher properties."""
-        cipher = Cipher.CHACHA20_POLY1305
+    def test_chacha20_properties(self) -> None:
+        """Test ChaCha20 cipher properties."""
+        cipher = Cipher.CHACHA20
         assert cipher.key_size == 32
         assert cipher.iv_size == 12
-        assert cipher.display_name == "ChaCha20-Poly1305"
+        assert cipher.display_name == "ChaCha20"
 
     def test_from_uuid_aes(self) -> None:
         """Test lookup of AES cipher by UUID."""
@@ -153,7 +153,7 @@ class TestCipherEnum:
         """Test lookup of ChaCha20 cipher by UUID."""
         uuid = bytes.fromhex("d6038a2b8b6f4cb5a524339a31dbb59a")
         cipher = Cipher.from_uuid(uuid)
-        assert cipher == Cipher.CHACHA20_POLY1305
+        assert cipher == Cipher.CHACHA20
 
     def test_from_uuid_unknown(self) -> None:
         """Test that unknown UUID raises ValueError."""
@@ -206,28 +206,27 @@ class TestCipherContext:
     def test_chacha_encrypt_decrypt_roundtrip(
         self, chacha_key: bytes, chacha_nonce: bytes
     ) -> None:
-        """Test ChaCha20-Poly1305 encryption and decryption roundtrip."""
+        """Test ChaCha20 encryption and decryption roundtrip."""
         plaintext = b"This is a test message of arbitrary length!"
-        ctx = CipherContext(Cipher.CHACHA20_POLY1305, chacha_key, chacha_nonce)
+        ctx = CipherContext(Cipher.CHACHA20, chacha_key, chacha_nonce)
         ciphertext = ctx.encrypt(plaintext)
-        # ChaCha20-Poly1305 adds 16-byte auth tag
-        assert len(ciphertext) == len(plaintext) + 16
-        ctx2 = CipherContext(Cipher.CHACHA20_POLY1305, chacha_key, chacha_nonce)
+        # ChaCha20 is a stream cipher - same length output
+        assert len(ciphertext) == len(plaintext)
+        ctx2 = CipherContext(Cipher.CHACHA20, chacha_key, chacha_nonce)
         decrypted = ctx2.decrypt(ciphertext)
         assert decrypted == plaintext
 
-    def test_chacha_authentication(
+    def test_chacha_stream_cipher_properties(
         self, chacha_key: bytes, chacha_nonce: bytes
     ) -> None:
-        """Test that ChaCha20-Poly1305 detects tampering."""
-        plaintext = b"This message will be tampered with"
-        ctx = CipherContext(Cipher.CHACHA20_POLY1305, chacha_key, chacha_nonce)
-        ciphertext = bytearray(ctx.encrypt(plaintext))
-        # Tamper with the ciphertext
-        ciphertext[0] ^= 0xFF
-        ctx2 = CipherContext(Cipher.CHACHA20_POLY1305, chacha_key, chacha_nonce)
-        with pytest.raises(ValueError, match="Authentication failed"):
-            ctx2.decrypt(bytes(ciphertext))
+        """Test ChaCha20 stream cipher produces different output per nonce."""
+        plaintext = b"Same plaintext for both"
+        ctx1 = CipherContext(Cipher.CHACHA20, chacha_key, chacha_nonce)
+        ctx2 = CipherContext(Cipher.CHACHA20, chacha_key, b"\x00" * 12)
+        ciphertext1 = ctx1.encrypt(plaintext)
+        ciphertext2 = ctx2.encrypt(plaintext)
+        # Different nonces produce different ciphertext
+        assert ciphertext1 != ciphertext2
 
     def test_invalid_key_size(self, aes_iv: bytes) -> None:
         """Test that wrong key size raises error."""
@@ -245,15 +244,7 @@ class TestCipherContext:
         """Test that wrong nonce size raises error for ChaCha20."""
         bad_nonce = b"too long nonce!!"  # 16 bytes, should be 12
         with pytest.raises(ValueError, match="requires 12-byte IV"):
-            CipherContext(Cipher.CHACHA20_POLY1305, chacha_key, bad_nonce)
-
-    def test_chacha_short_ciphertext(
-        self, chacha_key: bytes, chacha_nonce: bytes
-    ) -> None:
-        """Test that too-short ciphertext raises error."""
-        ctx = CipherContext(Cipher.CHACHA20_POLY1305, chacha_key, chacha_nonce)
-        with pytest.raises(ValueError, match="too short"):
-            ctx.decrypt(b"short")  # Less than 16-byte tag
+            CipherContext(Cipher.CHACHA20, chacha_key, bad_nonce)
 
     def test_aes_ciphertext_different_from_plaintext(
         self, aes_key: bytes, aes_iv: bytes

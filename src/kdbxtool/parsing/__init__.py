@@ -17,8 +17,17 @@ from .header import (
     KdbxHeader,
     KdbxVersion,
 )
+from .kdbx4 import (
+    DecryptedPayload,
+    InnerHeader,
+    Kdbx4Reader,
+    Kdbx4Writer,
+    read_kdbx4,
+    write_kdbx4,
+)
 
 __all__ = [
+    # Header
     "KDBX4_MAGIC",
     "KDBX_MAGIC",
     "CompressionType",
@@ -26,4 +35,11 @@ __all__ = [
     "InnerHeaderFieldType",
     "KdbxHeader",
     "KdbxVersion",
+    # KDBX4
+    "DecryptedPayload",
+    "InnerHeader",
+    "Kdbx4Reader",
+    "Kdbx4Writer",
+    "read_kdbx4",
+    "write_kdbx4",
 ]

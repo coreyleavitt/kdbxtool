@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import io
 import struct
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -199,6 +200,16 @@ class Kdbx4Reader:
                 salt=header.kdf_salt,
                 variant=header.kdf_type,
             )
+            # Warn if parameters are below security minimums
+            try:
+                config.validate_security()
+            except ValueError as e:
+                warnings.warn(
+                    f"Database has weak KDF parameters: {e}. "
+                    "Consider re-saving with stronger settings.",
+                    UserWarning,
+                    stacklevel=4,
+                )
             # Don't enforce minimums when reading - accept what the file has
             return derive_key_argon2(
                 composite_key.data, config, enforce_minimums=False

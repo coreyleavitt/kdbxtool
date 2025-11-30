@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     pass
 
 
-# KDBX4 time format (ISO 8601 with base64 encoding for binary times)
+# KDBX4 time format (ISO 8601, compatible with KeePassXC)
 KDBX4_TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 # Protected stream cipher IDs
@@ -834,14 +834,15 @@ class Database:
 
     @classmethod
     def _encode_time(cls, dt: datetime) -> str:
-        """Encode datetime to KDBX4 base64 binary format."""
-        # KDBX4 uses base64-encoded int64 seconds since 0001-01-01
-        base = datetime(1, 1, 1, tzinfo=timezone.utc)
-        delta = dt.replace(tzinfo=timezone.utc) - base
-        seconds = int(delta.total_seconds())
-        import struct
-        binary = struct.pack("<q", seconds)
-        return base64.b64encode(binary).decode("ascii")
+        """Encode datetime to ISO 8601 format for KDBX4.
+
+        Uses ISO 8601 format (e.g., 2025-01-15T10:30:45Z) which is
+        human-readable and compatible with KeePassXC.
+        """
+        # Ensure UTC timezone
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.strftime(KDBX4_TIME_FORMAT)
 
     # --- XML building ---
 

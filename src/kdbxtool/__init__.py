@@ -7,15 +7,34 @@ database files (KDBX format). It prioritizes security with:
 - Modern cryptographic defaults (Argon2id, ChaCha20)
 
 Example:
-    from kdbxtool import Database, Credentials
+    from kdbxtool import Database
 
-    creds = Credentials(password="secret")
-    with Database.open("vault.kdbx", creds) as db:
-        entry = db.entries.find(title="Gmail").first()
-        print(entry.username)
+    db = Database.open("vault.kdbx", password="secret")
+    entry = db.find_entries(title="Gmail")[0]
+    print(entry.username)
+
+    # Create new entry
+    db.root_group.create_entry(
+        title="New Site",
+        username="user",
+        password="pass123",
+    )
+    db.save()
 """
 
 __version__ = "0.1.0"
 
-# Public API will be exported here as modules are implemented
-__all__: list[str] = []
+from .database import Database, DatabaseSettings
+from .models import Entry, Group, HistoryEntry, Times
+from .security import Cipher, KdfType
+
+__all__ = [
+    "Database",
+    "DatabaseSettings",
+    "Entry",
+    "Group",
+    "HistoryEntry",
+    "Times",
+    "Cipher",
+    "KdfType",
+]

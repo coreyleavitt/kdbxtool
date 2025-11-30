@@ -373,11 +373,11 @@ class TestPkcs7Padding:
         reader = Kdbx4Reader(b"")
 
         # Padding length 0
-        with pytest.raises(ValueError, match="Invalid PKCS7 padding"):
+        with pytest.raises(ValueError, match="Decryption failed"):
             reader._remove_pkcs7_padding(b"0123456789abcde\x00")
 
         # Padding length > 16
-        with pytest.raises(ValueError, match="Invalid PKCS7 padding"):
+        with pytest.raises(ValueError, match="Decryption failed"):
             reader._remove_pkcs7_padding(b"0123456789abcde\x11")
 
     def test_invalid_padding_bytes(self) -> None:
@@ -387,7 +387,7 @@ class TestPkcs7Padding:
         reader = Kdbx4Reader(b"")
 
         # Says 4 bytes padding but not all are 0x04
-        with pytest.raises(ValueError, match="Invalid PKCS7 padding"):
+        with pytest.raises(ValueError, match="Decryption failed"):
             reader._remove_pkcs7_padding(b"0123456789ab\x04\x04\x04\x05")
 
 

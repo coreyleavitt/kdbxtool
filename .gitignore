@@ -73,3 +73,7 @@ dmypy.json
 
 # ruff
 .ruff_cache/
+
+# Planning documents (not tracked)
+GREENFIELD_PLAN.md
+UPSTREAM_ANALYSIS.md

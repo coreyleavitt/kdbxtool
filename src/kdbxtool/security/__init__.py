@@ -1,0 +1,52 @@
+"""Security-critical components for kdbxtool.
+
+This module contains all security-sensitive code including:
+- Secure memory handling (SecureBytes)
+- Cryptographic operations
+- Key derivation functions
+
+All code in this module should be audited carefully.
+"""
+
+from .crypto import (
+    Cipher,
+    CipherContext,
+    compute_hmac_sha256,
+    constant_time_compare,
+    secure_random_bytes,
+    verify_hmac_sha256,
+)
+from .kdf import (
+    ARGON2_MIN_ITERATIONS,
+    ARGON2_MIN_MEMORY_KIB,
+    ARGON2_MIN_PARALLELISM,
+    AesKdfConfig,
+    Argon2Config,
+    KdfType,
+    derive_composite_key,
+    derive_key_aes_kdf,
+    derive_key_argon2,
+)
+from .memory import SecureBytes
+
+__all__ = [
+    # Memory
+    "SecureBytes",
+    # Crypto
+    "Cipher",
+    "CipherContext",
+    "compute_hmac_sha256",
+    "constant_time_compare",
+    "secure_random_bytes",
+    "verify_hmac_sha256",
+    # KDF
+    "ARGON2_MIN_ITERATIONS",
+    "ARGON2_MIN_MEMORY_KIB",
+    "ARGON2_MIN_PARALLELISM",
+    "AesKdfConfig",
+    "Argon2Config",
+    "KdfType",
+    "derive_composite_key",
+    "derive_key_aes_kdf",
+    "derive_key_argon2",
+]

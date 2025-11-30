@@ -1,5 +1,6 @@
 """Tests for high-level Database API."""
 
+import base64
 import os
 import tempfile
 from pathlib import Path
@@ -7,6 +8,11 @@ from pathlib import Path
 import pytest
 
 from kdbxtool import Database, DatabaseSettings, Entry, Group
+from kdbxtool.database import (
+    PROTECTED_STREAM_CHACHA20,
+    PROTECTED_STREAM_SALSA20,
+    ProtectedStreamCipher,
+)
 from kdbxtool.security import Cipher, KdfType
 
 
@@ -356,3 +362,160 @@ class TestDatabaseStr:
         assert "My Database" in s
         assert "1 entries" in s
         assert "1 groups" in s
+
+
+class TestProtectedStreamCipher:
+    """Tests for protected value stream cipher."""
+
+    def test_chacha20_encrypt_decrypt_roundtrip(self) -> None:
+        """Test ChaCha20 stream cipher encryption/decryption."""
+        key = os.urandom(64)
+        plaintext = b"secret password"
+
+        cipher1 = ProtectedStreamCipher(PROTECTED_STREAM_CHACHA20, key)
+        ciphertext = cipher1.encrypt(plaintext)
+
+        # Ciphertext should differ from plaintext
+        assert ciphertext != plaintext
+        assert len(ciphertext) == len(plaintext)
+
+        # New cipher instance should decrypt correctly
+        cipher2 = ProtectedStreamCipher(PROTECTED_STREAM_CHACHA20, key)
+        decrypted = cipher2.decrypt(ciphertext)
+        assert decrypted == plaintext
+
+    def test_salsa20_encrypt_decrypt_roundtrip(self) -> None:
+        """Test Salsa20 stream cipher encryption/decryption."""
+        key = os.urandom(64)
+        plaintext = b"another secret"
+
+        cipher1 = ProtectedStreamCipher(PROTECTED_STREAM_SALSA20, key)
+        ciphertext = cipher1.encrypt(plaintext)
+
+        assert ciphertext != plaintext
+
+        cipher2 = ProtectedStreamCipher(PROTECTED_STREAM_SALSA20, key)
+        decrypted = cipher2.decrypt(ciphertext)
+        assert decrypted == plaintext
+
+    def test_different_keys_produce_different_ciphertext(self) -> None:
+        """Test that different keys produce different ciphertext."""
+        key1 = os.urandom(64)
+        key2 = os.urandom(64)
+        plaintext = b"test data"
+
+        cipher1 = ProtectedStreamCipher(PROTECTED_STREAM_CHACHA20, key1)
+        cipher2 = ProtectedStreamCipher(PROTECTED_STREAM_CHACHA20, key2)
+
+        assert cipher1.encrypt(plaintext) != cipher2.encrypt(plaintext)
+
+    def test_unknown_stream_id_raises(self) -> None:
+        """Test that unknown stream ID raises error."""
+        with pytest.raises(ValueError, match="Unknown protected stream"):
+            ProtectedStreamCipher(99, os.urandom(64))
+
+    def test_sequential_encryption(self) -> None:
+        """Test that sequential encryptions produce different ciphertext."""
+        key = os.urandom(64)
+        plaintext = b"same"
+
+        cipher = ProtectedStreamCipher(PROTECTED_STREAM_CHACHA20, key)
+
+        # Same plaintext encrypted sequentially should produce different ciphertext
+        # because the stream cipher advances
+        ct1 = cipher.encrypt(plaintext)
+        ct2 = cipher.encrypt(plaintext)
+        ct3 = cipher.encrypt(plaintext)
+
+        assert ct1 != ct2
+        assert ct2 != ct3
+        assert ct1 != ct3
+
+
+class TestProtectedValueRoundtrip:
+    """Tests for protected value encryption in databases."""
+
+    def test_password_protected_roundtrip(self) -> None:
+        """Test that password field survives roundtrip with protection."""
+        db = Database.create(password="dbpass")
+        db.root_group.create_entry(
+            title="Test",
+            username="user",
+            password="supersecretpassword123",
+        )
+
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="dbpass")
+
+        entry = db2.find_entries(title="Test")[0]
+        assert entry.password == "supersecretpassword123"
+
+    def test_multiple_protected_values_roundtrip(self) -> None:
+        """Test multiple entries with protected values."""
+        db = Database.create(password="test")
+
+        for i in range(5):
+            db.root_group.create_entry(
+                title=f"Entry{i}",
+                username=f"user{i}",
+                password=f"password{i}",
+            )
+
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+
+        for i in range(5):
+            entries = db2.find_entries(title=f"Entry{i}")
+            assert len(entries) == 1
+            assert entries[0].password == f"password{i}"
+
+    def test_otp_protected_roundtrip(self) -> None:
+        """Test that OTP field (also protected) survives roundtrip."""
+        db = Database.create(password="test")
+        entry = db.root_group.create_entry(title="OTP Test")
+        entry.otp = "otpauth://totp/Example:user@example.com?secret=JBSWY3DPEHPK3PXP"
+
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+
+        e = db2.find_entries(title="OTP Test")[0]
+        assert e.otp == "otpauth://totp/Example:user@example.com?secret=JBSWY3DPEHPK3PXP"
+
+    def test_protected_custom_property_roundtrip(self) -> None:
+        """Test that protected custom properties survive roundtrip."""
+        db = Database.create(password="test")
+        entry = db.root_group.create_entry(title="Custom Test")
+        entry.set_custom_property("SecretKey", "my-api-key-12345", protected=True)
+
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+
+        e = db2.find_entries(title="Custom Test")[0]
+        assert e.get_custom_property("SecretKey") == "my-api-key-12345"
+
+    def test_empty_password_roundtrip(self) -> None:
+        """Test that empty/None password survives roundtrip."""
+        db = Database.create(password="test")
+        entry = db.root_group.create_entry(title="Empty Pass")
+        entry.password = ""
+
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+
+        e = db2.find_entries(title="Empty Pass")[0]
+        # Empty string becomes None in XML parsing (both represent "no password")
+        assert e.password is None or e.password == ""
+
+    def test_unicode_password_roundtrip(self) -> None:
+        """Test that unicode password survives roundtrip."""
+        db = Database.create(password="test")
+        db.root_group.create_entry(
+            title="Unicode",
+            password="pässwörd123!@#日本語",
+        )
+
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+
+        e = db2.find_entries(title="Unicode")[0]
+        assert e.password == "pässwörd123!@#日本語"

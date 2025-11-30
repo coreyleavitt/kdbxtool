@@ -336,15 +336,25 @@ def derive_composite_key(
     if password is None and keyfile_data is None:
         raise ValueError("At least one credential required")
 
-    parts = []
+    parts: list[bytes] = []
+    secure_parts: list[SecureBytes] = []
 
-    if password is not None:
-        pwd_hash = hashlib.sha256(password.encode("utf-8")).digest()
-        parts.append(pwd_hash)
+    try:
+        if password is not None:
+            # Wrap password hash in SecureBytes for proper zeroization
+            pwd_hash = SecureBytes(
+                hashlib.sha256(password.encode("utf-8")).digest()
+            )
+            secure_parts.append(pwd_hash)
+            parts.append(pwd_hash.data)
 
-    if keyfile_data is not None:
-        key_bytes = _process_keyfile(keyfile_data)
-        parts.append(key_bytes)
+        if keyfile_data is not None:
+            key_bytes = _process_keyfile(keyfile_data)
+            parts.append(key_bytes)
 
-    composite = hashlib.sha256(b"".join(parts)).digest()
-    return SecureBytes(composite)
+        composite = hashlib.sha256(b"".join(parts)).digest()
+        return SecureBytes(composite)
+    finally:
+        # Zeroize intermediate values
+        for sp in secure_parts:
+            sp.zeroize()

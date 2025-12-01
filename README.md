@@ -18,23 +18,28 @@ pip install kdbxtool
 ## Quick Start
 
 ```python
-from kdbxtool import Database, Credentials
+from kdbxtool import Database
 
-# Open a database
-creds = Credentials(password="my-password")
-with Database.open("vault.kdbx", creds) as db:
+# Open a database with context manager
+with Database.open("vault.kdbx", password="my-password") as db:
     # Find entries
-    entry = db.entries.find(title="Gmail").first()
-    print(f"Username: {entry.username}")
+    entries = db.find_entries(title="Gmail")
+    if entries:
+        print(f"Username: {entries[0].username}")
 
     # Create new entries
-    db.root_group.add_entry(
+    db.root_group.create_entry(
         title="New Account",
         username="user@example.com",
-        password="secure-password"
+        password="secure-password",
     )
 
     db.save()
+
+# Create a new database
+db = Database.create(password="my-password", database_name="My Vault")
+db.root_group.create_entry(title="First Entry", username="me", password="secret")
+db.save("my-vault.kdbx")
 ```
 
 ## Security

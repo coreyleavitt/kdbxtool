@@ -71,7 +71,7 @@ class Group:
         """
         if self.is_root_group or self._parent is None:
             return []
-        parts = []
+        parts: list[str] = []
         current: Optional[Group] = self
         while current is not None and not current.is_root_group:
             if current.name is not None:

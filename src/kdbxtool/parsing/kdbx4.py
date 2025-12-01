@@ -197,7 +197,7 @@ class Kdbx4Reader:
             ):
                 raise ValueError("Missing Argon2 parameters in header")
 
-            config = Argon2Config(
+            argon2_config = Argon2Config(
                 memory_kib=header.argon2_memory_kib,
                 iterations=header.argon2_iterations,
                 parallelism=header.argon2_parallelism,
@@ -206,7 +206,7 @@ class Kdbx4Reader:
             )
             # Warn if parameters are below security minimums
             try:
-                config.validate_security()
+                argon2_config.validate_security()
             except ValueError as e:
                 warnings.warn(
                     f"Database has weak KDF parameters: {e}. "
@@ -216,16 +216,16 @@ class Kdbx4Reader:
                 )
             # Don't enforce minimums when reading - accept what the file has
             return derive_key_argon2(
-                composite_key.data, config, enforce_minimums=False
+                composite_key.data, argon2_config, enforce_minimums=False
             )
         elif header.kdf_type == KdfType.AES_KDF:
             if header.aes_kdf_rounds is None:
                 raise ValueError("Missing AES-KDF rounds in header")
-            config = AesKdfConfig(
+            aes_config = AesKdfConfig(
                 rounds=header.aes_kdf_rounds,
                 salt=header.kdf_salt,
             )
-            return derive_key_aes_kdf(composite_key.data, config)
+            return derive_key_aes_kdf(composite_key.data, aes_config)
         else:
             raise ValueError(f"Unsupported KDF: {header.kdf_type}")
 

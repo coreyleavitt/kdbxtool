@@ -567,6 +567,34 @@ class Database:
         """
         yield from self._root_group.iter_groups(recursive=recursive)
 
+    # --- Memory protection ---
+
+    def apply_protection_policy(self, entry: Entry) -> None:
+        """Apply the database's memory protection policy to an entry.
+
+        Updates the `protected` flag on the entry's string fields
+        according to the database's memory_protection settings.
+
+        This is automatically applied when saving the database, but
+        can be called manually if you need protection applied immediately
+        for in-memory operations.
+
+        Args:
+            entry: Entry to apply policy to
+        """
+        for key, field in entry.strings.items():
+            if key in self._settings.memory_protection:
+                field.protected = self._settings.memory_protection[key]
+
+    def apply_protection_policy_all(self) -> None:
+        """Apply memory protection policy to all entries in the database.
+
+        Updates all entries' string field protection flags according
+        to the database's memory_protection settings.
+        """
+        for entry in self.iter_entries():
+            self.apply_protection_policy(entry)
+
     # --- Binary attachments ---
 
     def get_binary(self, ref: int) -> bytes | None:
@@ -1099,13 +1127,19 @@ class Database:
 
         self._build_times(elem, entry.times)
 
-        # String fields
+        # String fields - apply memory protection policy from database settings
         for key, field in entry.strings.items():
             string_elem = SubElement(elem, "String")
             SubElement(string_elem, "Key").text = key
             value_elem = SubElement(string_elem, "Value")
             value_elem.text = field.value or ""
-            if field.protected:
+            # Use database memory_protection policy for standard fields,
+            # fall back to field.protected for custom fields
+            if key in self._settings.memory_protection:
+                should_protect = self._settings.memory_protection[key]
+            else:
+                should_protect = field.protected
+            if should_protect:
                 value_elem.set("Protected", "True")
 
         # Binary references

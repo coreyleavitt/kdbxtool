@@ -179,11 +179,11 @@ class CipherContext:
             Encrypted data (same length as input for ChaCha20)
         """
         if self._cipher == Cipher.AES256_CBC:
-            cipher = AES.new(self._key, AES.MODE_CBC, iv=self._iv)
-            return cipher.encrypt(plaintext)
+            aes_cipher = AES.new(self._key, AES.MODE_CBC, iv=self._iv)
+            return aes_cipher.encrypt(plaintext)
         else:
-            cipher = ChaCha20.new(key=self._key, nonce=self._iv)
-            return cipher.encrypt(plaintext)
+            chacha_cipher = ChaCha20.new(key=self._key, nonce=self._iv)
+            return chacha_cipher.encrypt(plaintext)
 
     def decrypt(self, ciphertext: bytes) -> bytes:
         """Decrypt ciphertext data.
@@ -198,8 +198,8 @@ class CipherContext:
             Decrypted plaintext
         """
         if self._cipher == Cipher.AES256_CBC:
-            cipher = AES.new(self._key, AES.MODE_CBC, iv=self._iv)
-            return cipher.decrypt(ciphertext)
+            aes_cipher = AES.new(self._key, AES.MODE_CBC, iv=self._iv)
+            return aes_cipher.decrypt(ciphertext)
         else:
-            cipher = ChaCha20.new(key=self._key, nonce=self._iv)
-            return cipher.decrypt(ciphertext)
+            chacha_cipher = ChaCha20.new(key=self._key, nonce=self._iv)
+            return chacha_cipher.decrypt(ciphertext)

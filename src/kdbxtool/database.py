@@ -15,15 +15,22 @@ import hashlib
 import os
 import uuid as uuid_module
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Iterator, Optional, Union
+from typing import TYPE_CHECKING, Iterator, Optional, Protocol, Union, cast
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 from defusedxml import ElementTree as DefusedET
 
 from Cryptodome.Cipher import ChaCha20, Salsa20
+
+
+class _StreamCipher(Protocol):
+    """Protocol for stream ciphers used for protected value encryption."""
+
+    def encrypt(self, plaintext: bytes) -> bytes: ...
+    def decrypt(self, ciphertext: bytes) -> bytes: ...
 
 from .models import Entry, Group, HistoryEntry, Times
 from .models.entry import AutoType, BinaryRef, StringField
@@ -67,7 +74,7 @@ class ProtectedStreamCipher:
         self._stream_key = stream_key
         self._cipher = self._create_cipher()
 
-    def _create_cipher(self) -> object:
+    def _create_cipher(self) -> _StreamCipher:
         """Create the appropriate cipher based on stream_id."""
         if self._stream_id == PROTECTED_STREAM_CHACHA20:
             # ChaCha20: SHA-512 of key, first 32 bytes = key, bytes 32-44 = nonce
@@ -1043,7 +1050,7 @@ class Database:
                     seconds = struct.unpack("<q", binary)[0]
                     # Convert to datetime (epoch is 0001-01-01)
                     base = datetime(1, 1, 1, tzinfo=timezone.utc)
-                    return base + __import__("datetime").timedelta(seconds=seconds)
+                    return base + timedelta(seconds=seconds)
             except (ValueError, struct.error):
                 pass  # Not valid base64 or wrong size
 
@@ -1089,8 +1096,8 @@ class Database:
         if self._inner_header is not None:
             self._encrypt_protected_values(root, self._inner_header)
 
-        # Serialize to bytes
-        return tostring(root, encoding="utf-8", xml_declaration=True)
+        # Serialize to bytes (tostring returns bytes when encoding is specified)
+        return cast(bytes, tostring(root, encoding="utf-8", xml_declaration=True))
 
     def _encrypt_protected_values(self, root: Element, inner_header: InnerHeader) -> None:
         """Encrypt all protected values in the XML tree in document order.

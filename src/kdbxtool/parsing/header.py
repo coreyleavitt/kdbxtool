@@ -262,29 +262,29 @@ class KdbxHeader:
         kdf_data = fields[HeaderFieldType.KDF_PARAMETERS]
         kdf_params = cls._parse_variant_dict(kdf_data)
 
-        # Get KDF UUID
+        # Get KDF UUID (must be bytes)
         kdf_uuid = kdf_params.get("$UUID")
-        if not kdf_uuid:
-            raise ValueError("Missing KDF UUID in parameters")
+        if not isinstance(kdf_uuid, bytes):
+            raise ValueError("Missing or invalid KDF UUID in parameters")
         kdf_type = KdfType.from_uuid(kdf_uuid)
 
-        # Get salt
+        # Get salt (must be bytes)
         kdf_salt = kdf_params.get("S")
-        if not kdf_salt or len(kdf_salt) != 32:
+        if not isinstance(kdf_salt, bytes) or len(kdf_salt) != 32:
             raise ValueError("Invalid or missing KDF salt")
 
-        argon2_memory = None
-        argon2_iterations = None
-        argon2_parallelism = None
+        argon2_memory: int | None = None
+        argon2_iterations: int | None = None
+        argon2_parallelism: int | None = None
 
         if kdf_type in (KdfType.ARGON2ID, KdfType.ARGON2D):
-            # Argon2 parameters
+            # Argon2 parameters (must be ints)
             memory = kdf_params.get("M")
             iterations = kdf_params.get("I")
             parallelism = kdf_params.get("P")
 
-            if memory is None or iterations is None or parallelism is None:
-                raise ValueError("Missing Argon2 parameters")
+            if not isinstance(memory, int) or not isinstance(iterations, int) or not isinstance(parallelism, int):
+                raise ValueError("Missing or invalid Argon2 parameters")
 
             argon2_memory = memory // 1024  # Convert bytes to KiB
             argon2_iterations = iterations
@@ -358,7 +358,7 @@ class KdbxHeader:
         )
 
     @staticmethod
-    def _parse_variant_dict(data: bytes) -> dict[str, bytes | int]:
+    def _parse_variant_dict(data: bytes) -> dict[str, bytes | int | bool | str]:
         """Parse KDBX4 VariantDictionary format.
 
         VariantDictionary is a TLV format used for KDF parameters:
@@ -387,7 +387,7 @@ class KdbxHeader:
         if version != 0x0100:
             raise ValueError(f"Unsupported VariantDictionary version: {version:#x}")
 
-        result: dict[str, bytes | int] = {}
+        result: dict[str, bytes | int | bool | str] = {}
         offset = 2
 
         while offset < len(data):

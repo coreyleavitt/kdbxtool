@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid as uuid_module
 from dataclasses import dataclass, field
 from typing import Iterator, Optional
@@ -297,6 +298,108 @@ class Group:
             if url is not None and entry.url != url:
                 continue
             if tags is not None and not all(t in entry.tags for t in tags):
+                continue
+            results.append(entry)
+        return results
+
+    def find_entries_contains(
+        self,
+        title: Optional[str] = None,
+        username: Optional[str] = None,
+        url: Optional[str] = None,
+        notes: Optional[str] = None,
+        recursive: bool = True,
+        case_sensitive: bool = False,
+    ) -> list[Entry]:
+        """Find entries where fields contain the given substrings.
+
+        All criteria are combined with AND logic. None means "any value".
+
+        Args:
+            title: Match entries whose title contains this substring
+            username: Match entries whose username contains this substring
+            url: Match entries whose URL contains this substring
+            notes: Match entries whose notes contain this substring
+            recursive: Search in subgroups
+            case_sensitive: If False (default), matching is case-insensitive
+
+        Returns:
+            List of matching entries
+        """
+
+        def contains(field_value: Optional[str], search: str) -> bool:
+            if field_value is None:
+                return False
+            if case_sensitive:
+                return search in field_value
+            return search.lower() in field_value.lower()
+
+        results = []
+        for entry in self.iter_entries(recursive=recursive):
+            if title is not None and not contains(entry.title, title):
+                continue
+            if username is not None and not contains(entry.username, username):
+                continue
+            if url is not None and not contains(entry.url, url):
+                continue
+            if notes is not None and not contains(entry.notes, notes):
+                continue
+            results.append(entry)
+        return results
+
+    def find_entries_regex(
+        self,
+        title: Optional[str] = None,
+        username: Optional[str] = None,
+        url: Optional[str] = None,
+        notes: Optional[str] = None,
+        recursive: bool = True,
+        case_sensitive: bool = False,
+    ) -> list[Entry]:
+        """Find entries where fields match the given regex patterns.
+
+        All criteria are combined with AND logic. None means "any value".
+
+        Args:
+            title: Regex pattern to match against title
+            username: Regex pattern to match against username
+            url: Regex pattern to match against URL
+            notes: Regex pattern to match against notes
+            recursive: Search in subgroups
+            case_sensitive: If False (default), matching is case-insensitive
+
+        Returns:
+            List of matching entries
+
+        Raises:
+            re.error: If any pattern is not a valid regex
+        """
+        # Pre-compile patterns for efficiency
+        flags = 0 if case_sensitive else re.IGNORECASE
+        patterns: dict[str, re.Pattern[str]] = {}
+        if title is not None:
+            patterns["title"] = re.compile(title, flags)
+        if username is not None:
+            patterns["username"] = re.compile(username, flags)
+        if url is not None:
+            patterns["url"] = re.compile(url, flags)
+        if notes is not None:
+            patterns["notes"] = re.compile(notes, flags)
+
+        def matches(field_value: Optional[str], pattern: re.Pattern[str]) -> bool:
+            if field_value is None:
+                return False
+            return pattern.search(field_value) is not None
+
+        results = []
+        for entry in self.iter_entries(recursive=recursive):
+            if "title" in patterns and not matches(entry.title, patterns["title"]):
+                continue
+            if "username" in patterns and not matches(entry.username, patterns["username"]):
+                continue
+            if "url" in patterns and not matches(entry.url, patterns["url"]):
+                continue
+            if "notes" in patterns and not matches(entry.notes, patterns["notes"]):
                 continue
             results.append(entry)
         return results

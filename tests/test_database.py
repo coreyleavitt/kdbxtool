@@ -237,6 +237,75 @@ class TestDatabaseSearch:
         groups = list(populated_db.iter_groups())
         assert len(groups) == 3  # Recycle Bin, Work, Personal (not root)
 
+    def test_find_entries_contains_title(self, populated_db: Database) -> None:
+        """Test finding entries by partial title match."""
+        # Should find GitHub (case-insensitive by default)
+        entries = populated_db.find_entries_contains(title="git")
+        assert len(entries) == 1
+        assert entries[0].title == "GitHub"
+
+    def test_find_entries_contains_username(self, populated_db: Database) -> None:
+        """Test finding entries by partial username match."""
+        # Should find all @work.com entries
+        entries = populated_db.find_entries_contains(username="@work.com")
+        assert len(entries) == 2
+
+    def test_find_entries_contains_case_sensitive(self, populated_db: Database) -> None:
+        """Test case-sensitive substring matching."""
+        # Case-insensitive (default) should find GitHub
+        entries = populated_db.find_entries_contains(title="GITHUB")
+        assert len(entries) == 1
+
+        # Case-sensitive should not find it
+        entries = populated_db.find_entries_contains(title="GITHUB", case_sensitive=True)
+        assert len(entries) == 0
+
+    def test_find_entries_contains_multiple_criteria(self, populated_db: Database) -> None:
+        """Test substring search with multiple criteria (AND logic)."""
+        entries = populated_db.find_entries_contains(title="a", username="@work.com")
+        # "Jira" and "Slack" both have 'a' in title and @work.com in username
+        assert len(entries) == 2
+
+    def test_find_entries_regex_title(self, populated_db: Database) -> None:
+        """Test finding entries by regex pattern on title."""
+        # Match titles starting with 'G' or 'S'
+        entries = populated_db.find_entries_regex(title="^[GS]")
+        assert len(entries) == 3  # GitHub, Gmail, Slack
+
+    def test_find_entries_regex_url(self, populated_db: Database) -> None:
+        """Test finding entries by regex on URL."""
+        entries = populated_db.find_entries_regex(url=r"https://.*\.com")
+        assert len(entries) == 1
+        assert entries[0].title == "GitHub"
+
+    def test_find_entries_regex_case_sensitivity(self) -> None:
+        """Test regex case sensitivity options."""
+        db = Database.create(password="test")
+        db.root_group.create_entry(title="TestEntry", username="user")
+
+        # Case-insensitive by default
+        entries = db.find_entries_regex(title="testentry")
+        assert len(entries) == 1
+
+        entries = db.find_entries_regex(title="TESTENTRY")
+        assert len(entries) == 1
+
+        # Can opt into case-sensitive
+        entries = db.find_entries_regex(title="testentry", case_sensitive=True)
+        assert len(entries) == 0
+
+        entries = db.find_entries_regex(title="TestEntry", case_sensitive=True)
+        assert len(entries) == 1
+
+    def test_find_entries_regex_invalid_pattern(self) -> None:
+        """Test that invalid regex raises error."""
+        import re
+        db = Database.create(password="test")
+        db.root_group.create_entry(title="Test")
+
+        with pytest.raises(re.error):
+            db.find_entries_regex(title="[invalid")
+
 
 class TestDatabaseCredentials:
     """Tests for credential management."""

@@ -545,6 +545,75 @@ class Database:
 
         return self._root_group.find_groups(name=name, recursive=recursive)
 
+    def find_entries_contains(
+        self,
+        title: Optional[str] = None,
+        username: Optional[str] = None,
+        url: Optional[str] = None,
+        notes: Optional[str] = None,
+        recursive: bool = True,
+        case_sensitive: bool = False,
+    ) -> list[Entry]:
+        """Find entries where fields contain the given substrings.
+
+        All criteria are combined with AND logic. None means "any value".
+
+        Args:
+            title: Match entries whose title contains this substring
+            username: Match entries whose username contains this substring
+            url: Match entries whose URL contains this substring
+            notes: Match entries whose notes contain this substring
+            recursive: Search in subgroups
+            case_sensitive: If False (default), matching is case-insensitive
+
+        Returns:
+            List of matching entries
+        """
+        return self._root_group.find_entries_contains(
+            title=title,
+            username=username,
+            url=url,
+            notes=notes,
+            recursive=recursive,
+            case_sensitive=case_sensitive,
+        )
+
+    def find_entries_regex(
+        self,
+        title: Optional[str] = None,
+        username: Optional[str] = None,
+        url: Optional[str] = None,
+        notes: Optional[str] = None,
+        recursive: bool = True,
+        case_sensitive: bool = False,
+    ) -> list[Entry]:
+        """Find entries where fields match the given regex patterns.
+
+        All criteria are combined with AND logic. None means "any value".
+
+        Args:
+            title: Regex pattern to match against title
+            username: Regex pattern to match against username
+            url: Regex pattern to match against URL
+            notes: Regex pattern to match against notes
+            recursive: Search in subgroups
+            case_sensitive: If False (default), matching is case-insensitive
+
+        Returns:
+            List of matching entries
+
+        Raises:
+            re.error: If any pattern is not a valid regex
+        """
+        return self._root_group.find_entries_regex(
+            title=title,
+            username=username,
+            url=url,
+            notes=notes,
+            recursive=recursive,
+            case_sensitive=case_sensitive,
+        )
+
     def iter_entries(self, recursive: bool = True) -> Iterator[Entry]:
         """Iterate over all entries in the database.
 

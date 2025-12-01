@@ -364,6 +364,74 @@ class TestDatabaseStr:
         assert "2 groups" in s  # Group1 + Recycle Bin
 
 
+class TestBinaryAttachments:
+    """Tests for binary attachment support."""
+
+    def test_add_and_get_attachment(self) -> None:
+        """Test adding and retrieving an attachment."""
+        db = Database.create(password="test")
+        entry = db.root_group.create_entry(title="Test")
+
+        # Add attachment
+        data = b"Hello, World!"
+        db.add_attachment(entry, "hello.txt", data)
+
+        # Retrieve attachment
+        retrieved = db.get_attachment(entry, "hello.txt")
+        assert retrieved == data
+
+    def test_list_attachments(self) -> None:
+        """Test listing attachments."""
+        db = Database.create(password="test")
+        entry = db.root_group.create_entry(title="Test")
+
+        db.add_attachment(entry, "file1.txt", b"data1")
+        db.add_attachment(entry, "file2.pdf", b"data2")
+
+        names = db.list_attachments(entry)
+        assert "file1.txt" in names
+        assert "file2.pdf" in names
+        assert len(names) == 2
+
+    def test_remove_attachment(self) -> None:
+        """Test removing an attachment."""
+        db = Database.create(password="test")
+        entry = db.root_group.create_entry(title="Test")
+
+        db.add_attachment(entry, "removeme.txt", b"data")
+        assert db.get_attachment(entry, "removeme.txt") is not None
+
+        result = db.remove_attachment(entry, "removeme.txt")
+        assert result is True
+        assert db.get_attachment(entry, "removeme.txt") is None
+
+    def test_remove_nonexistent_attachment(self) -> None:
+        """Test removing a nonexistent attachment."""
+        db = Database.create(password="test")
+        entry = db.root_group.create_entry(title="Test")
+
+        result = db.remove_attachment(entry, "nonexistent.txt")
+        assert result is False
+
+    def test_attachment_roundtrip(self) -> None:
+        """Test that attachments survive save/open cycle."""
+        db = Database.create(password="test")
+        entry = db.root_group.create_entry(title="Test")
+
+        data = b"\x00\x01\x02\x03\xff\xfe\xfd"  # Binary data
+        db.add_attachment(entry, "binary.bin", data)
+
+        # Save and reopen
+        saved = db.to_bytes()
+        db2 = Database.open_bytes(saved, password="test")
+
+        # Find the entry and check attachment
+        entries = db2.find_entries(title="Test")
+        assert len(entries) == 1
+        retrieved = db2.get_attachment(entries[0], "binary.bin")
+        assert retrieved == data
+
+
 class TestProtectedStreamCipher:
     """Tests for protected value stream cipher."""
 

@@ -443,6 +443,19 @@ class Database:
         # versions of the encrypted file to XOR plaintexts.
         self._inner_header.random_stream_key = os.urandom(64)
 
+        # Sync binaries to inner header (preserve protection flags where possible)
+        existing_binaries = self._inner_header.binaries
+        new_binaries: dict[int, tuple[bool, bytes]] = {}
+        for ref, data in self._binaries.items():
+            if ref in existing_binaries:
+                # Preserve existing protection flag
+                protected, _ = existing_binaries[ref]
+                new_binaries[ref] = (protected, data)
+            else:
+                # New binary, default to protected
+                new_binaries[ref] = (True, data)
+        self._inner_header.binaries = new_binaries
+
         # Build XML
         xml_data = self._build_xml()
 
@@ -554,6 +567,111 @@ class Database:
         """
         yield from self._root_group.iter_groups(recursive=recursive)
 
+    # --- Binary attachments ---
+
+    def get_binary(self, ref: int) -> bytes | None:
+        """Get binary attachment data by reference ID.
+
+        Args:
+            ref: Binary reference ID
+
+        Returns:
+            Binary data or None if not found
+        """
+        return self._binaries.get(ref)
+
+    def add_binary(self, data: bytes, protected: bool = True) -> int:
+        """Add a new binary attachment to the database.
+
+        Args:
+            data: Binary data
+            protected: Whether the binary should be memory-protected
+
+        Returns:
+            Reference ID for the new binary
+        """
+        # Find next available index
+        ref = max(self._binaries.keys(), default=-1) + 1
+        self._binaries[ref] = data
+        # Update inner header
+        if self._inner_header is not None:
+            self._inner_header.binaries[ref] = (protected, data)
+        return ref
+
+    def remove_binary(self, ref: int) -> bool:
+        """Remove a binary attachment from the database.
+
+        Args:
+            ref: Binary reference ID
+
+        Returns:
+            True if removed, False if not found
+        """
+        if ref in self._binaries:
+            del self._binaries[ref]
+            if self._inner_header is not None and ref in self._inner_header.binaries:
+                del self._inner_header.binaries[ref]
+            return True
+        return False
+
+    def get_attachment(self, entry: Entry, name: str) -> bytes | None:
+        """Get an attachment from an entry by filename.
+
+        Args:
+            entry: Entry to get attachment from
+            name: Filename of the attachment
+
+        Returns:
+            Attachment data or None if not found
+        """
+        for binary_ref in entry.binaries:
+            if binary_ref.key == name:
+                return self._binaries.get(binary_ref.ref)
+        return None
+
+    def add_attachment(
+        self, entry: Entry, name: str, data: bytes, protected: bool = True
+    ) -> None:
+        """Add an attachment to an entry.
+
+        Args:
+            entry: Entry to add attachment to
+            name: Filename for the attachment
+            data: Attachment data
+            protected: Whether the attachment should be memory-protected
+        """
+        ref = self.add_binary(data, protected=protected)
+        entry.binaries.append(BinaryRef(key=name, ref=ref))
+
+    def remove_attachment(self, entry: Entry, name: str) -> bool:
+        """Remove an attachment from an entry by filename.
+
+        Args:
+            entry: Entry to remove attachment from
+            name: Filename of the attachment
+
+        Returns:
+            True if removed, False if not found
+        """
+        for i, binary_ref in enumerate(entry.binaries):
+            if binary_ref.key == name:
+                # Remove from entry's list
+                entry.binaries.pop(i)
+                # Note: We don't remove from _binaries as other entries may reference it
+                return True
+        return False
+
+    def list_attachments(self, entry: Entry) -> list[str]:
+        """List all attachment filenames for an entry.
+
+        Args:
+            entry: Entry to list attachments for
+
+        Returns:
+            List of attachment filenames
+        """
+        return [binary_ref.key for binary_ref in entry.binaries]
+
     # --- XML parsing ---
 
     @classmethod
@@ -590,8 +708,12 @@ class Database:
         root_group = cls._parse_group(group_elem)
         root_group._is_root = True
 
-        # Parse binaries from Meta (KDBX3 style) - not supported yet
+        # Extract binaries from inner header (KDBX4 style)
+        # The protection flag indicates memory protection policy, not encryption
         binaries: dict[int, bytes] = {}
+        if inner_header is not None:
+            for idx, (protected, data) in inner_header.binaries.items():
+                binaries[idx] = data
 
         return root_group, settings, binaries
 

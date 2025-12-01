@@ -54,12 +54,12 @@ entry_password = safe_text
 entry_url = safe_text
 entry_notes = safe_text
 
-# Tags (list of safe strings, no semicolons since they're used as delimiter)
+# Tags (list of safe strings, no semicolons or commas since they're used as delimiters)
 # Must contain at least one non-whitespace char to avoid being stripped
 tag_text = st.text(
     alphabet=st.characters(
         whitelist_categories=("L", "N", "P", "S"),  # Letters, numbers, punctuation, symbols
-        blacklist_characters=(";",),  # No semicolons (delimiter)
+        blacklist_characters=(";", ","),  # No semicolons or commas (delimiters)
     ),
     min_size=1,
     max_size=20,

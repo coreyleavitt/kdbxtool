@@ -25,6 +25,12 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 from Cryptodome.Cipher import ChaCha20, Salsa20
 from defusedxml import ElementTree as DefusedET
 
+from .exceptions import (
+    DatabaseError,
+    InvalidXmlError,
+    MissingCredentialsError,
+    UnknownCipherError,
+)
 from .models import Entry, Group, HistoryEntry, Times
 from .models.entry import AutoType, BinaryRef, StringField
 from .parsing import CompressionType, KdbxHeader, KdbxVersion
@@ -80,7 +86,7 @@ class ProtectedStreamCipher:
             nonce = b'\xE8\x30\x09\x4B\x97\x20\x5D\x2A'
             return Salsa20.new(key=key, nonce=nonce)
         else:
-            raise ValueError(f"Unknown protected stream cipher ID: {self._stream_id}")
+            raise UnknownCipherError(self._stream_id.to_bytes(4, "little"))
 
     def decrypt(self, ciphertext: bytes) -> bytes:
         """Decrypt protected value (XOR with stream)."""
@@ -344,7 +350,7 @@ class Database:
             New Database instance
         """
         if password is None and keyfile is None:
-            raise ValueError("At least one of password or keyfile is required")
+            raise MissingCredentialsError()
 
         keyfile_data = None
         if keyfile:
@@ -414,7 +420,7 @@ class Database:
         if filepath:
             self._filepath = Path(filepath)
         elif self._filepath is None:
-            raise ValueError("No filepath specified and database wasn't opened from file")
+            raise DatabaseError("No filepath specified and database wasn't opened from file")
 
         data = self.to_bytes()
         self._filepath.write_bytes(data)
@@ -429,13 +435,13 @@ class Database:
             ValueError: If no credentials are set
         """
         if self._password is None and self._keyfile_data is None:
-            raise ValueError("No credentials set - use set_credentials() first")
+            raise MissingCredentialsError()
 
         if self._header is None:
-            raise ValueError("No header - database not properly initialized")
+            raise DatabaseError("No header - database not properly initialized")
 
         if self._inner_header is None:
-            raise ValueError("No inner header - database not properly initialized")
+            raise DatabaseError("No inner header - database not properly initialized")
 
         # Regenerate protected stream key to avoid keystream reuse across saves.
         # This prevents theoretical attacks where an attacker compares multiple
@@ -482,7 +488,7 @@ class Database:
             ValueError: If both password and keyfile are None
         """
         if password is None and keyfile_data is None:
-            raise ValueError("At least one of password or keyfile_data is required")
+            raise MissingCredentialsError()
         self._password = password
         self._keyfile_data = keyfile_data
 
@@ -795,11 +801,11 @@ class Database:
         # Parse Root/Group for entries
         root_elem = root.find("Root")
         if root_elem is None:
-            raise ValueError("Invalid KDBX XML: missing Root element")
+            raise InvalidXmlError("Missing Root element")
 
         group_elem = root_elem.find("Group")
         if group_elem is None:
-            raise ValueError("Invalid KDBX XML: missing root Group element")
+            raise InvalidXmlError("Missing root Group element")
 
         root_group = cls._parse_group(group_elem)
         root_group._is_root = True

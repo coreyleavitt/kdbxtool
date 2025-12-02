@@ -4,6 +4,7 @@ import os
 
 import pytest
 
+from kdbxtool import KdfError, MissingCredentialsError
 from kdbxtool.security.kdf import (
     ARGON2_MIN_ITERATIONS,
     ARGON2_MIN_MEMORY_KIB,
@@ -60,7 +61,7 @@ class TestKdfType:
     def test_from_uuid_unknown(self) -> None:
         """Test that unknown UUID raises ValueError."""
         unknown_uuid = b"\x00" * 16
-        with pytest.raises(ValueError, match="Unknown KDF UUID"):
+        with pytest.raises(KdfError):
             KdfType.from_uuid(unknown_uuid)
 
 
@@ -101,7 +102,7 @@ class TestArgon2Config:
     def test_invalid_variant(self) -> None:
         """Test that AES-KDF variant is rejected."""
         salt = os.urandom(32)
-        with pytest.raises(ValueError, match="Invalid Argon2 variant"):
+        with pytest.raises(KdfError):
             Argon2Config(
                 memory_kib=64 * 1024,
                 iterations=3,
@@ -112,7 +113,7 @@ class TestArgon2Config:
 
     def test_short_salt(self) -> None:
         """Test that short salt is rejected."""
-        with pytest.raises(ValueError, match="at least 16 bytes"):
+        with pytest.raises(KdfError):
             Argon2Config(
                 memory_kib=64 * 1024,
                 iterations=3,
@@ -135,7 +136,7 @@ class TestArgon2Config:
             parallelism=4,
             salt=salt,
         )
-        with pytest.raises(ValueError, match="Memory.*below minimum"):
+        with pytest.raises(KdfError):
             config.validate_security()
 
     def test_validate_security_low_iterations(self) -> None:
@@ -147,7 +148,7 @@ class TestArgon2Config:
             parallelism=4,
             salt=salt,
         )
-        with pytest.raises(ValueError, match="Iterations.*below minimum"):
+        with pytest.raises(KdfError):
             config.validate_security()
 
     def test_validate_security_low_parallelism(self) -> None:
@@ -159,7 +160,7 @@ class TestArgon2Config:
             parallelism=0,
             salt=salt,
         )
-        with pytest.raises(ValueError, match="Parallelism.*below minimum"):
+        with pytest.raises(KdfError):
             config.validate_security()
 
 
@@ -175,13 +176,13 @@ class TestAesKdfConfig:
 
     def test_invalid_salt_length(self) -> None:
         """Test that wrong salt length is rejected."""
-        with pytest.raises(ValueError, match="exactly 32 bytes"):
+        with pytest.raises(KdfError):
             AesKdfConfig(rounds=60000, salt=b"short")
 
     def test_invalid_rounds(self) -> None:
         """Test that zero rounds is rejected."""
         salt = os.urandom(32)
-        with pytest.raises(ValueError, match="at least 1"):
+        with pytest.raises(KdfError):
             AesKdfConfig(rounds=0, salt=salt)
 
 
@@ -245,7 +246,7 @@ class TestDeriveKeyArgon2:
             parallelism=2,
             salt=salt,
         )
-        with pytest.raises(ValueError, match="Weak Argon2 parameters"):
+        with pytest.raises(KdfError):
             derive_key_argon2(b"password", config)
 
     def test_disable_minimum_enforcement(self) -> None:
@@ -303,7 +304,7 @@ class TestDeriveKeyAesKdf:
         """Test that wrong password length is rejected."""
         salt = os.urandom(32)
         config = AesKdfConfig(rounds=100, salt=salt)
-        with pytest.raises(ValueError, match="32-byte input"):
+        with pytest.raises(KdfError):
             derive_key_aes_kdf(b"short", config)
 
 
@@ -335,7 +336,7 @@ class TestDeriveCompositeKey:
 
     def test_no_credentials_raises(self) -> None:
         """Test that no credentials raises error."""
-        with pytest.raises(ValueError, match="At least one credential"):
+        with pytest.raises(MissingCredentialsError):
             derive_composite_key()
 
     def test_deterministic(self) -> None:

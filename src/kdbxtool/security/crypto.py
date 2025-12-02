@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 
 from Cryptodome.Cipher import AES, ChaCha20
 
+from kdbxtool.exceptions import UnknownCipherError
+
 if TYPE_CHECKING:
     pass
 
@@ -72,7 +74,7 @@ class Cipher(Enum):
         for cipher in cls:
             if cipher.value == uuid_bytes:
                 return cipher
-        raise ValueError(f"Unknown cipher UUID: {uuid_bytes.hex()}")
+        raise UnknownCipherError(uuid_bytes)
 
 
 def constant_time_compare(a: bytes | bytearray, b: bytes | bytearray) -> bool:

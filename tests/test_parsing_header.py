@@ -4,6 +4,12 @@ import struct
 
 import pytest
 
+from kdbxtool import (
+    CorruptedDataError,
+    InvalidSignatureError,
+    KdfError,
+    UnsupportedVersionError,
+)
 from kdbxtool.parsing.header import (
     KDBX_MAGIC,
     CompressionType,
@@ -196,12 +202,12 @@ class TestKdbxHeaderParsing:
     def test_invalid_magic(self) -> None:
         """Test that invalid magic raises error."""
         bad_data = b"\x00" * 100
-        with pytest.raises(ValueError, match="Invalid KDBX signature"):
+        with pytest.raises(InvalidSignatureError):
             KdbxHeader.parse(bad_data)
 
     def test_data_too_short(self) -> None:
         """Test that short data raises error."""
-        with pytest.raises(ValueError, match="too short"):
+        with pytest.raises(CorruptedDataError):
             KdbxHeader.parse(b"\x00" * 5)
 
     def test_missing_cipher_id(self) -> None:
@@ -214,7 +220,7 @@ class TestKdbxHeaderParsing:
         parts.append(struct.pack("<BI", HeaderFieldType.END, 4))
         parts.append(b"\r\n\r\n")
 
-        with pytest.raises(ValueError, match="Missing cipher ID"):
+        with pytest.raises(CorruptedDataError):
             KdbxHeader.parse(b"".join(parts))
 
     def test_invalid_master_seed_length(self) -> None:
@@ -235,7 +241,7 @@ class TestKdbxHeaderParsing:
         parts.append(struct.pack("<BI", HeaderFieldType.END, 4))
         parts.append(b"\r\n\r\n")
 
-        with pytest.raises(ValueError, match="Invalid master seed length"):
+        with pytest.raises(CorruptedDataError):
             KdbxHeader.parse(b"".join(parts))
 
 
@@ -310,7 +316,7 @@ class TestKdbxHeaderSerialization:
             aes_kdf_rounds=60000,
         )
 
-        with pytest.raises(ValueError, match="Only KDBX4"):
+        with pytest.raises(UnsupportedVersionError):
             header.to_bytes()
 
     def test_missing_argon2_params_raises(self) -> None:
@@ -326,7 +332,7 @@ class TestKdbxHeaderSerialization:
             # Missing argon2 parameters
         )
 
-        with pytest.raises(ValueError, match="Missing Argon2 parameters"):
+        with pytest.raises(KdfError):
             header.to_bytes()
 
 
@@ -384,10 +390,10 @@ class TestVariantDictParsing:
     def test_invalid_version(self) -> None:
         """Test that invalid version raises error."""
         data = struct.pack("<H", 0x0200)  # Wrong version
-        with pytest.raises(ValueError, match="Unsupported VariantDictionary version"):
+        with pytest.raises(CorruptedDataError):
             KdbxHeader._parse_variant_dict(data)
 
     def test_too_short(self) -> None:
         """Test that too short data raises error."""
-        with pytest.raises(ValueError, match="too short"):
+        with pytest.raises(CorruptedDataError):
             KdbxHeader._parse_variant_dict(b"\x00")

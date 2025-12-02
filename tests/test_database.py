@@ -7,7 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from kdbxtool import Database, DatabaseSettings, Entry, Group
+from kdbxtool import (
+    AuthenticationError,
+    Database,
+    DatabaseError,
+    DatabaseSettings,
+    Entry,
+    Group,
+    MissingCredentialsError,
+    UnknownCipherError,
+)
 from kdbxtool.database import (
     PROTECTED_STREAM_CHACHA20,
     PROTECTED_STREAM_SALSA20,
@@ -57,7 +66,7 @@ class TestDatabaseOpen:
         """Test that wrong password raises error."""
         if not TEST4_KDBX.exists():
             pytest.skip("Test fixture test4.kdbx not found")
-        with pytest.raises(ValueError, match="HMAC|wrong|credentials"):
+        with pytest.raises(AuthenticationError):
             Database.open(TEST4_KDBX, password="wrongpassword", keyfile=TEST4_KEY)
 
     def test_open_bytes(self) -> None:
@@ -85,7 +94,7 @@ class TestDatabaseCreate:
 
     def test_create_no_credentials_raises(self) -> None:
         """Test that creating without credentials raises error."""
-        with pytest.raises(ValueError, match="password or keyfile"):
+        with pytest.raises(MissingCredentialsError):
             Database.create()
 
     def test_create_with_options(self) -> None:
@@ -146,7 +155,7 @@ class TestDatabaseSave:
     def test_save_no_filepath_raises(self) -> None:
         """Test that save without filepath raises error."""
         db = Database.create(password="test")
-        with pytest.raises(ValueError, match="No filepath"):
+        with pytest.raises(DatabaseError):
             db.save()
 
     def test_to_bytes_no_credentials_raises(self) -> None:
@@ -154,7 +163,7 @@ class TestDatabaseSave:
         db = Database.create(password="test")
         db._password = None
         db._keyfile_data = None
-        with pytest.raises(ValueError, match="No credentials"):
+        with pytest.raises(MissingCredentialsError):
             db.to_bytes()
 
 
@@ -322,7 +331,7 @@ class TestDatabaseCredentials:
     def test_set_credentials_none_raises(self) -> None:
         """Test that setting no credentials raises error."""
         db = Database.create(password="test")
-        with pytest.raises(ValueError, match="password or keyfile"):
+        with pytest.raises(MissingCredentialsError):
             db.set_credentials()
 
 
@@ -548,7 +557,7 @@ class TestProtectedStreamCipher:
 
     def test_unknown_stream_id_raises(self) -> None:
         """Test that unknown stream ID raises error."""
-        with pytest.raises(ValueError, match="Unknown protected stream"):
+        with pytest.raises(UnknownCipherError):
             ProtectedStreamCipher(99, os.urandom(64))
 
     def test_sequential_encryption(self) -> None:

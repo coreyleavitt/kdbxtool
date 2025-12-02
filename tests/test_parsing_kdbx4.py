@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from kdbxtool import AuthenticationError, DecryptionError, MissingCredentialsError
 from kdbxtool.parsing import (
     CompressionType,
     KdbxHeader,
@@ -56,12 +57,12 @@ class TestKdbx4Reader:
 
     def test_decrypt_wrong_password(self, test4_data: bytes, test4_keyfile: bytes) -> None:
         """Test that wrong password raises error."""
-        with pytest.raises(ValueError, match="HMAC verification failed|wrong credentials"):
+        with pytest.raises(AuthenticationError):
             read_kdbx4(test4_data, password="wrongpassword", keyfile_data=test4_keyfile)
 
     def test_decrypt_no_credentials(self, test4_data: bytes) -> None:
         """Test that no credentials raises error."""
-        with pytest.raises(ValueError, match="At least one credential"):
+        with pytest.raises(MissingCredentialsError):
             read_kdbx4(test4_data)
 
     def test_header_parsed_correctly(self, test4_data: bytes, test4_keyfile: bytes) -> None:
@@ -321,11 +322,11 @@ class TestKdbx4Writer:
         assert result.xml_data == sample_xml
 
         # Password alone should fail
-        with pytest.raises(ValueError):
+        with pytest.raises(AuthenticationError):
             read_kdbx4(encrypted, password=password)
 
         # Keyfile alone should fail
-        with pytest.raises(ValueError):
+        with pytest.raises(AuthenticationError):
             read_kdbx4(encrypted, keyfile_data=keyfile_data)
 
     def test_large_payload(
@@ -373,11 +374,11 @@ class TestPkcs7Padding:
         reader = Kdbx4Reader(b"")
 
         # Padding length 0
-        with pytest.raises(ValueError, match="Decryption failed"):
+        with pytest.raises(DecryptionError):
             reader._remove_pkcs7_padding(b"0123456789abcde\x00")
 
         # Padding length > 16
-        with pytest.raises(ValueError, match="Decryption failed"):
+        with pytest.raises(DecryptionError):
             reader._remove_pkcs7_padding(b"0123456789abcde\x11")
 
     def test_invalid_padding_bytes(self) -> None:
@@ -387,7 +388,7 @@ class TestPkcs7Padding:
         reader = Kdbx4Reader(b"")
 
         # Says 4 bytes padding but not all are 0x04
-        with pytest.raises(ValueError, match="Decryption failed"):
+        with pytest.raises(DecryptionError):
             reader._remove_pkcs7_padding(b"0123456789ab\x04\x04\x04\x05")
 
 

@@ -2,6 +2,7 @@
 
 import pytest
 
+from kdbxtool import UnknownCipherError
 from kdbxtool.security.crypto import (
     Cipher,
     CipherContext,
@@ -156,9 +157,9 @@ class TestCipherEnum:
         assert cipher == Cipher.CHACHA20
 
     def test_from_uuid_unknown(self) -> None:
-        """Test that unknown UUID raises ValueError."""
+        """Test that unknown UUID raises UnknownCipherError."""
         unknown_uuid = b"\x00" * 16
-        with pytest.raises(ValueError, match="Unknown cipher UUID"):
+        with pytest.raises(UnknownCipherError):
             Cipher.from_uuid(unknown_uuid)
 
     def test_uuid_is_16_bytes(self) -> None:

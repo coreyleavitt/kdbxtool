@@ -25,6 +25,13 @@ import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from kdbxtool.exceptions import (
+    AuthenticationError,
+    CorruptedDataError,
+    DecryptionError,
+    KdfError,
+    UnsupportedVersionError,
+)
 from kdbxtool.security import (
     Argon2Config,
     CipherContext,
@@ -113,7 +120,7 @@ class Kdbx4Reader:
         header, header_end = KdbxHeader.parse(self._data)
 
         if header.version != KdbxVersion.KDBX4:
-            raise ValueError(f"Expected KDBX4, got version {header.version}")
+            raise UnsupportedVersionError(header.version.value, 0)
 
         self._offset = header_end
 
@@ -124,7 +131,7 @@ class Kdbx4Reader:
         # Verify header hash
         computed_hash = hashlib.sha256(header.raw_header).digest()
         if not constant_time_compare(computed_hash, header_hash):
-            raise ValueError("Header hash mismatch - file may be corrupted")
+            raise CorruptedDataError("Header hash mismatch - file may be corrupted")
 
         # Derive composite key from credentials
         composite_key = derive_composite_key(
@@ -144,9 +151,7 @@ class Kdbx4Reader:
         block_key = self._compute_block_hmac_key(hmac_key, 0xFFFFFFFFFFFFFFFF)
         computed_hmac = compute_hmac_sha256(block_key, header.raw_header)
         if not constant_time_compare(computed_hmac, header_hmac):
-            raise ValueError(
-                "Header HMAC verification failed - wrong credentials or corrupted file"
-            )
+            raise AuthenticationError()
 
         # Read and verify HMAC block stream
         encrypted_payload = self._read_hmac_block_stream(hmac_key)
@@ -178,7 +183,7 @@ class Kdbx4Reader:
     def _read_bytes(self, n: int) -> bytes:
         """Read n bytes from current position."""
         if self._offset + n > len(self._data):
-            raise ValueError(f"Unexpected end of file at offset {self._offset}")
+            raise CorruptedDataError(f"Unexpected end of file at offset {self._offset}")
         result = self._data[self._offset : self._offset + n]
         self._offset += n
         return result
@@ -193,7 +198,7 @@ class Kdbx4Reader:
                 or header.argon2_iterations is None
                 or header.argon2_parallelism is None
             ):
-                raise ValueError("Missing Argon2 parameters in header")
+                raise KdfError("Missing Argon2 parameters in header")
 
             argon2_config = Argon2Config(
                 memory_kib=header.argon2_memory_kib,
@@ -205,7 +210,7 @@ class Kdbx4Reader:
             # Warn if parameters are below security minimums
             try:
                 argon2_config.validate_security()
-            except ValueError as e:
+            except KdfError as e:
                 warnings.warn(
                     f"Database has weak KDF parameters: {e}. "
                     "Consider re-saving with stronger settings.",
@@ -218,14 +223,14 @@ class Kdbx4Reader:
             )
         elif header.kdf_type == KdfType.AES_KDF:
             if header.aes_kdf_rounds is None:
-                raise ValueError("Missing AES-KDF rounds in header")
+                raise KdfError("Missing AES-KDF rounds in header")
             aes_config = AesKdfConfig(
                 rounds=header.aes_kdf_rounds,
                 salt=header.kdf_salt,
             )
             return derive_key_aes_kdf(composite_key.data, aes_config)
         else:
-            raise ValueError(f"Unsupported KDF: {header.kdf_type}")
+            raise KdfError(f"Unsupported KDF: {header.kdf_type}")
 
     def _derive_keys(
         self, transformed_key: bytes, master_seed: bytes
@@ -275,7 +280,7 @@ class Kdbx4Reader:
                     struct.pack("<Q", block_index) + struct.pack("<I", 0),
                 )
                 if not constant_time_compare(expected, block_hmac):
-                    raise ValueError("HMAC verification failed for final block")
+                    raise AuthenticationError("Block authentication failed")
                 break
 
             block_data = self._read_bytes(block_len)
@@ -290,7 +295,7 @@ class Kdbx4Reader:
             expected = compute_hmac_sha256(block_key, hmac_data)
 
             if not constant_time_compare(expected, block_hmac):
-                raise ValueError(f"HMAC verification failed for block {block_index}")
+                raise AuthenticationError("Block authentication failed")
 
             blocks.append(block_data)
             block_index += 1
@@ -306,14 +311,14 @@ class Kdbx4Reader:
         We still use generic error messages for defense-in-depth.
         """
         if not data:
-            raise ValueError("Decryption failed - invalid payload")
+            raise DecryptionError()
         padding_len = data[-1]
         if padding_len == 0 or padding_len > 16:
-            raise ValueError("Decryption failed - invalid payload")
+            raise DecryptionError()
         # Verify all padding bytes are correct
         for i in range(1, padding_len + 1):
             if data[-i] != padding_len:
-                raise ValueError("Decryption failed - invalid payload")
+                raise DecryptionError()
         return data[:-padding_len]
 
     def _parse_inner_header(self, data: bytes) -> tuple[InnerHeader, int]:
@@ -329,14 +334,14 @@ class Kdbx4Reader:
 
         while offset < len(data):
             if offset + 5 > len(data):
-                raise ValueError("Truncated inner header")
+                raise CorruptedDataError("Truncated inner header")
 
             field_type = data[offset]
             field_len = struct.unpack_from("<I", data, offset + 1)[0]
             offset += 5
 
             if offset + field_len > len(data):
-                raise ValueError("Truncated inner header field")
+                raise CorruptedDataError("Truncated inner header field")
 
             field_data = data[offset : offset + field_len]
             offset += field_len
@@ -351,7 +356,7 @@ class Kdbx4Reader:
                 # First byte is protection flag
                 binary_data = field_data[1:]
                 if len(binary_data) > MAX_BINARY_SIZE:
-                    raise ValueError(
+                    raise CorruptedDataError(
                         f"Binary attachment too large: {len(binary_data)} bytes "
                         f"(max {MAX_BINARY_SIZE} bytes)"
                     )
@@ -396,7 +401,7 @@ class Kdbx4Writer:
             Complete KDBX4 file as bytes
         """
         if header.version != KdbxVersion.KDBX4:
-            raise ValueError("Only KDBX4 writing is supported")
+            raise UnsupportedVersionError(header.version.value, 0)
 
         # Derive composite key from credentials
         composite_key = derive_composite_key(
@@ -454,7 +459,7 @@ class Kdbx4Writer:
                 or header.argon2_iterations is None
                 or header.argon2_parallelism is None
             ):
-                raise ValueError("Missing Argon2 parameters in header")
+                raise KdfError("Missing Argon2 parameters in header")
 
             config = Argon2Config(
                 memory_kib=header.argon2_memory_kib,
@@ -465,7 +470,7 @@ class Kdbx4Writer:
             )
             return derive_key_argon2(composite_key.data, config)
         else:
-            raise ValueError(f"Unsupported KDF for writing: {header.kdf_type}")
+            raise KdfError(f"Unsupported KDF for writing: {header.kdf_type}")
 
     def _derive_keys(
         self, transformed_key: bytes, master_seed: bytes

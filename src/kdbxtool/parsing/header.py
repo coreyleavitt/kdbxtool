@@ -17,6 +17,12 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Self
 
+from kdbxtool.exceptions import (
+    CorruptedDataError,
+    InvalidSignatureError,
+    KdfError,
+    UnsupportedVersionError,
+)
 from kdbxtool.security import Cipher, KdfType
 
 # KDBX signature bytes
@@ -138,12 +144,12 @@ class KdbxHeader:
             ValueError: If header is malformed or unsupported
         """
         if len(data) < 12:
-            raise ValueError("Data too short for KDBX header")
+            raise CorruptedDataError("Data too short for KDBX header")
 
         # Verify magic signature
         magic = data[:8]
         if magic != KDBX_MAGIC:
-            raise ValueError(
+            raise InvalidSignatureError(
                 f"Invalid KDBX signature: {magic.hex()} "
                 f"(expected {KDBX_MAGIC.hex()})"
             )
@@ -156,7 +162,7 @@ class KdbxHeader:
         elif version_major == 3:
             version = KdbxVersion.KDBX3
         else:
-            raise ValueError(f"Unsupported KDBX version: {version_major}.{version_minor}")
+            raise UnsupportedVersionError(version_major, version_minor)
 
         # Parse header fields
         offset = 12
@@ -166,20 +172,20 @@ class KdbxHeader:
             if version == KdbxVersion.KDBX4:
                 # KDBX4: 1-byte type, 4-byte length
                 if offset + 5 > len(data):
-                    raise ValueError("Truncated header field")
+                    raise CorruptedDataError("Truncated header field")
                 field_type = data[offset]
                 field_len = struct.unpack_from("<I", data, offset + 1)[0]
                 offset += 5
             else:
                 # KDBX3: 1-byte type, 2-byte length
                 if offset + 3 > len(data):
-                    raise ValueError("Truncated header field")
+                    raise CorruptedDataError("Truncated header field")
                 field_type = data[offset]
                 field_len = struct.unpack_from("<H", data, offset + 1)[0]
                 offset += 3
 
             if offset + field_len > len(data):
-                raise ValueError(f"Truncated header field data at offset {offset}")
+                raise CorruptedDataError(f"Truncated header field data at offset {offset}")
 
             field_data = data[offset : offset + field_len]
             offset += field_len
@@ -195,12 +201,12 @@ class KdbxHeader:
 
         # Cipher ID (required)
         if HeaderFieldType.CIPHER_ID not in header_fields:
-            raise ValueError("Missing cipher ID in header")
+            raise CorruptedDataError("Missing cipher ID in header")
         cipher = Cipher.from_uuid(header_fields[HeaderFieldType.CIPHER_ID])
 
         # Compression (required)
         if HeaderFieldType.COMPRESSION_FLAGS not in header_fields:
-            raise ValueError("Missing compression flags in header")
+            raise CorruptedDataError("Missing compression flags in header")
         compression_val = struct.unpack(
             "<I", header_fields[HeaderFieldType.COMPRESSION_FLAGS]
         )[0]
@@ -208,14 +214,14 @@ class KdbxHeader:
 
         # Master seed (required, 32 bytes)
         if HeaderFieldType.MASTER_SEED not in header_fields:
-            raise ValueError("Missing master seed in header")
+            raise CorruptedDataError("Missing master seed in header")
         master_seed = header_fields[HeaderFieldType.MASTER_SEED]
         if len(master_seed) != 32:
-            raise ValueError(f"Invalid master seed length: {len(master_seed)}")
+            raise CorruptedDataError(f"Invalid master seed length: {len(master_seed)}")
 
         # Encryption IV (required)
         if HeaderFieldType.ENCRYPTION_IV not in header_fields:
-            raise ValueError("Missing encryption IV in header")
+            raise CorruptedDataError("Missing encryption IV in header")
         encryption_iv = header_fields[HeaderFieldType.ENCRYPTION_IV]
 
         # KDF parameters
@@ -256,7 +262,7 @@ class KdbxHeader:
     ) -> tuple[Self, int]:
         """Parse KDBX4-specific KDF parameters."""
         if HeaderFieldType.KDF_PARAMETERS not in fields:
-            raise ValueError("Missing KDF parameters in KDBX4 header")
+            raise CorruptedDataError("Missing KDF parameters in KDBX4 header")
 
         kdf_data = fields[HeaderFieldType.KDF_PARAMETERS]
         kdf_params = cls._parse_variant_dict(kdf_data)
@@ -264,13 +270,13 @@ class KdbxHeader:
         # Get KDF UUID (must be bytes)
         kdf_uuid = kdf_params.get("$UUID")
         if not isinstance(kdf_uuid, bytes):
-            raise ValueError("Missing or invalid KDF UUID in parameters")
+            raise KdfError("Missing or invalid KDF UUID in parameters")
         kdf_type = KdfType.from_uuid(kdf_uuid)
 
         # Get salt (must be bytes)
         kdf_salt = kdf_params.get("S")
         if not isinstance(kdf_salt, bytes) or len(kdf_salt) != 32:
-            raise ValueError("Invalid or missing KDF salt")
+            raise KdfError("Invalid or missing KDF salt")
 
         argon2_memory: int | None = None
         argon2_iterations: int | None = None
@@ -287,7 +293,7 @@ class KdbxHeader:
                 or not isinstance(iterations, int)
                 or not isinstance(parallelism, int)
             ):
-                raise ValueError("Missing or invalid Argon2 parameters")
+                raise KdfError("Missing or invalid Argon2 parameters")
 
             argon2_memory = memory // 1024  # Convert bytes to KiB
             argon2_iterations = iterations
@@ -325,14 +331,14 @@ class KdbxHeader:
         """Parse KDBX3-specific KDF parameters (AES-KDF)."""
         # Transform seed (AES-KDF key)
         if HeaderFieldType.TRANSFORM_SEED not in fields:
-            raise ValueError("Missing transform seed in KDBX3 header")
+            raise CorruptedDataError("Missing transform seed in KDBX3 header")
         kdf_salt = fields[HeaderFieldType.TRANSFORM_SEED]
         if len(kdf_salt) != 32:
-            raise ValueError(f"Invalid transform seed length: {len(kdf_salt)}")
+            raise CorruptedDataError(f"Invalid transform seed length: {len(kdf_salt)}")
 
         # Transform rounds
         if HeaderFieldType.TRANSFORM_ROUNDS not in fields:
-            raise ValueError("Missing transform rounds in KDBX3 header")
+            raise CorruptedDataError("Missing transform rounds in KDBX3 header")
         aes_kdf_rounds = struct.unpack(
             "<Q", fields[HeaderFieldType.TRANSFORM_ROUNDS]
         )[0]
@@ -384,11 +390,11 @@ class KdbxHeader:
         - 0x42: ByteArray
         """
         if len(data) < 2:
-            raise ValueError("VariantDictionary too short")
+            raise CorruptedDataError("VariantDictionary too short")
 
         version = struct.unpack_from("<H", data, 0)[0]
         if version != 0x0100:
-            raise ValueError(f"Unsupported VariantDictionary version: {version:#x}")
+            raise CorruptedDataError(f"Unsupported VariantDictionary version: {version:#x}")
 
         result: dict[str, bytes | int | bool | str] = {}
         offset = 2
@@ -405,23 +411,23 @@ class KdbxHeader:
 
             # Read key
             if offset + 4 > len(data):
-                raise ValueError("Truncated VariantDictionary key length")
+                raise CorruptedDataError("Truncated VariantDictionary key length")
             key_len = struct.unpack_from("<I", data, offset)[0]
             offset += 4
 
             if offset + key_len > len(data):
-                raise ValueError("Truncated VariantDictionary key")
+                raise CorruptedDataError("Truncated VariantDictionary key")
             key = data[offset : offset + key_len].decode("utf-8")
             offset += key_len
 
             # Read value
             if offset + 4 > len(data):
-                raise ValueError("Truncated VariantDictionary value length")
+                raise CorruptedDataError("Truncated VariantDictionary value length")
             val_len = struct.unpack_from("<I", data, offset)[0]
             offset += 4
 
             if offset + val_len > len(data):
-                raise ValueError("Truncated VariantDictionary value")
+                raise CorruptedDataError("Truncated VariantDictionary value")
             val_data = data[offset : offset + val_len]
             offset += val_len
 
@@ -456,7 +462,7 @@ class KdbxHeader:
             ValueError: If header is incomplete or invalid
         """
         if self.version != KdbxVersion.KDBX4:
-            raise ValueError("Only KDBX4 serialization is supported")
+            raise UnsupportedVersionError(self.version.value, 0)
 
         parts = []
 
@@ -525,7 +531,7 @@ class KdbxHeader:
                 or self.argon2_iterations is None
                 or self.argon2_parallelism is None
             ):
-                raise ValueError("Missing Argon2 parameters")
+                raise KdfError("Missing Argon2 parameters")
 
             # Memory in bytes (UInt64)
             add_entry(0x05, "M", struct.pack("<Q", self.argon2_memory_kib * 1024))

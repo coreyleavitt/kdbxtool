@@ -33,13 +33,14 @@ jobs:
       - name: Generate coverage badge JSON
         if: matrix.python-version == '3.12'
         run: |
-          # Extract coverage percentage from coverage.xml
+          # Extract coverage percentage from HTML report (matches displayed value)
           COVERAGE=$(python -c "
-          import xml.etree.ElementTree as ET
-          tree = ET.parse('coverage.xml')
-          root = tree.getroot()
-          line_rate = float(root.get('line-rate', 0))
-          print(int(line_rate * 100))
+          import re
+          with open('htmlcov/index.html') as f:
+              content = f.read()
+          # Look for 'Coverage report: XX%' or the total percentage
+          match = re.search(r'(\d+)%', content)
+          print(match.group(1) if match else '0')
           ")
 
           # Determine color based on coverage
@@ -97,25 +98,28 @@ jobs:
 
       - name: Generate mypy badge JSON
         run: |
-          # Extract precision from mypy index.html
-          # The index.html contains a line like: "Total: 1577 lines, 100.00% precision"
-          PRECISION=$(python -c "
+          # Extract imprecise percentage from mypy index.html
+          # The report shows "X.XX% imprecise" as the overall summary
+          IMPRECISE=$(python -c "
           import re
           with open('mypy-report/index.html') as f:
               content = f.read()
-          match = re.search(r'(\d+\.?\d*)% precision', content)
+          # Look for the overall imprecise percentage (first one in the file)
+          match = re.search(r'(\d+\.?\d*)% imprecise', content)
           if match:
-              print(match.group(1).split('.')[0])  # Integer part
+              print(match.group(1))
           else:
-              print('100')
+              print('0')
           ")
 
-          # Color based on precision (mypy is strict, so we expect high precision)
-          if [ "$PRECISION" -ge 100 ]; then
+          # Color based on imprecise % (lower is better)
+          # Convert to integer for comparison (bash doesn't do floats)
+          IMPRECISE_INT=$(echo "$IMPRECISE" | cut -d. -f1)
+          if [ "$IMPRECISE_INT" -le 1 ]; then
             COLOR="brightgreen"
-          elif [ "$PRECISION" -ge 95 ]; then
+          elif [ "$IMPRECISE_INT" -le 5 ]; then
             COLOR="green"
-          elif [ "$PRECISION" -ge 90 ]; then
+          elif [ "$IMPRECISE_INT" -le 10 ]; then
             COLOR="yellowgreen"
           else
             COLOR="yellow"
@@ -125,7 +129,7 @@ jobs:
           {
             "schemaVersion": 1,
             "label": "mypy",
-            "message": "${PRECISION}% precise",
+            "message": "${IMPRECISE}% imprecise",
             "color": "${COLOR}"
           }
           EOF

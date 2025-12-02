@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 
 def _now() -> datetime:
     """Get current UTC time."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass
@@ -31,10 +30,10 @@ class Times:
     creation_time: datetime = field(default_factory=_now)
     last_modification_time: datetime = field(default_factory=_now)
     last_access_time: datetime = field(default_factory=_now)
-    expiry_time: Optional[datetime] = None
+    expiry_time: datetime | None = None
     expires: bool = False
     usage_count: int = 0
-    location_changed: Optional[datetime] = None
+    location_changed: datetime | None = None
 
     def __post_init__(self) -> None:
         """Ensure location_changed has a default value."""
@@ -50,7 +49,7 @@ class Times:
         """
         if not self.expires or self.expiry_time is None:
             return False
-        return datetime.now(timezone.utc) > self.expiry_time
+        return datetime.now(UTC) > self.expiry_time
 
     def touch(self, modify: bool = False) -> None:
         """Update access time, and optionally modification time.
@@ -72,7 +71,7 @@ class Times:
     def create_new(
         cls,
         expires: bool = False,
-        expiry_time: Optional[datetime] = None,
+        expiry_time: datetime | None = None,
     ) -> Times:
         """Create timestamps for a new element.
 

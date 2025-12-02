@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-import argon2
 from argon2.low_level import Type as Argon2Type
 from argon2.low_level import hash_secret_raw
 
@@ -274,6 +273,7 @@ def _process_keyfile(keyfile_data: bytes) -> bytes:
     # Try parsing as XML keyfile
     try:
         import base64
+
         import defusedxml.ElementTree as ET
 
         tree = ET.fromstring(keyfile_data)

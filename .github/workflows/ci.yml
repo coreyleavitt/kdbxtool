@@ -30,6 +30,41 @@ jobs:
         run: |
           pytest tests/ --cov=kdbxtool --cov-report=xml --cov-report=html
 
+      - name: Generate coverage badge JSON
+        if: matrix.python-version == '3.12'
+        run: |
+          # Extract coverage percentage from coverage.xml
+          COVERAGE=$(python -c "
+          import xml.etree.ElementTree as ET
+          tree = ET.parse('coverage.xml')
+          root = tree.getroot()
+          line_rate = float(root.get('line-rate', 0))
+          print(int(line_rate * 100))
+          ")
+
+          # Determine color based on coverage
+          if [ "$COVERAGE" -ge 90 ]; then
+            COLOR="brightgreen"
+          elif [ "$COVERAGE" -ge 80 ]; then
+            COLOR="green"
+          elif [ "$COVERAGE" -ge 70 ]; then
+            COLOR="yellowgreen"
+          elif [ "$COVERAGE" -ge 60 ]; then
+            COLOR="yellow"
+          else
+            COLOR="red"
+          fi
+
+          # Create shields.io endpoint JSON
+          cat > coverage-badge.json << EOF
+          {
+            "schemaVersion": 1,
+            "label": "coverage",
+            "message": "${COVERAGE}%",
+            "color": "${COLOR}"
+          }
+          EOF
+
       - name: Upload coverage artifact
         if: matrix.python-version == '3.12'
         uses: actions/upload-artifact@v4
@@ -38,6 +73,7 @@ jobs:
           path: |
             htmlcov/
             coverage.xml
+            coverage-badge.json
 
   typecheck:
     runs-on: ubuntu-latest
@@ -58,6 +94,41 @@ jobs:
       - name: Run mypy with HTML report
         run: |
           mypy --strict --html-report mypy-report src/kdbxtool
+
+      - name: Generate mypy badge JSON
+        run: |
+          # Extract precision from mypy index.html
+          # The index.html contains a line like: "Total: 1577 lines, 100.00% precision"
+          PRECISION=$(python -c "
+          import re
+          with open('mypy-report/index.html') as f:
+              content = f.read()
+          match = re.search(r'(\d+\.?\d*)% precision', content)
+          if match:
+              print(match.group(1).split('.')[0])  # Integer part
+          else:
+              print('100')
+          ")
+
+          # Color based on precision (mypy is strict, so we expect high precision)
+          if [ "$PRECISION" -ge 100 ]; then
+            COLOR="brightgreen"
+          elif [ "$PRECISION" -ge 95 ]; then
+            COLOR="green"
+          elif [ "$PRECISION" -ge 90 ]; then
+            COLOR="yellowgreen"
+          else
+            COLOR="yellow"
+          fi
+
+          cat > mypy-report/mypy-badge.json << EOF
+          {
+            "schemaVersion": 1,
+            "label": "mypy",
+            "message": "${PRECISION}% precise",
+            "color": "${COLOR}"
+          }
+          EOF
 
       - name: Upload mypy artifact
         uses: actions/upload-artifact@v4

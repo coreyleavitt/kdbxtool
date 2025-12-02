@@ -25,10 +25,31 @@ Example:
 __version__ = "0.1.0"
 
 from .database import Database, DatabaseSettings
+from .exceptions import (
+    AuthenticationError,
+    CorruptedDataError,
+    CredentialError,
+    CryptoError,
+    DatabaseError,
+    DecryptionError,
+    EntryNotFoundError,
+    FormatError,
+    GroupNotFoundError,
+    InvalidKeyFileError,
+    InvalidPasswordError,
+    InvalidSignatureError,
+    InvalidXmlError,
+    KdbxError,
+    KdfError,
+    MissingCredentialsError,
+    UnknownCipherError,
+    UnsupportedVersionError,
+)
 from .models import Entry, Group, HistoryEntry, Times
 from .security import Cipher, KdfType
 
 __all__ = [
+    # Core classes
     "Database",
     "DatabaseSettings",
     "Entry",
@@ -37,4 +58,23 @@ __all__ = [
     "Times",
     "Cipher",
     "KdfType",
+    # Exceptions
+    "KdbxError",
+    "FormatError",
+    "InvalidSignatureError",
+    "UnsupportedVersionError",
+    "CorruptedDataError",
+    "CryptoError",
+    "DecryptionError",
+    "AuthenticationError",
+    "KdfError",
+    "UnknownCipherError",
+    "CredentialError",
+    "InvalidPasswordError",
+    "InvalidKeyFileError",
+    "MissingCredentialsError",
+    "DatabaseError",
+    "EntryNotFoundError",
+    "GroupNotFoundError",
+    "InvalidXmlError",
 ]

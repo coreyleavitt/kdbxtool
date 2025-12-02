@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 from argon2.low_level import Type as Argon2Type
 from argon2.low_level import hash_secret_raw
 
+from kdbxtool.exceptions import InvalidKeyFileError, KdfError, MissingCredentialsError
+
 from .crypto import constant_time_compare
 from .memory import SecureBytes
 
@@ -63,7 +65,7 @@ class KdfType(Enum):
         for kdf in cls:
             if kdf.value == uuid_bytes:
                 return kdf
-        raise ValueError(f"Unknown KDF UUID: {uuid_bytes.hex()}")
+        raise KdfError(f"Unknown KDF UUID: {uuid_bytes.hex()}")
 
 
 # Minimum Argon2 parameters for security
@@ -94,9 +96,9 @@ class Argon2Config:
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
         if self.variant not in (KdfType.ARGON2D, KdfType.ARGON2ID):
-            raise ValueError(f"Invalid Argon2 variant: {self.variant}")
+            raise KdfError(f"Invalid Argon2 variant: {self.variant}")
         if len(self.salt) < 16:
-            raise ValueError("Argon2 salt must be at least 16 bytes")
+            raise KdfError("Argon2 salt must be at least 16 bytes")
 
     def validate_security(self) -> None:
         """Check that parameters meet minimum security requirements.
@@ -121,7 +123,7 @@ class Argon2Config:
                 f"{ARGON2_MIN_PARALLELISM}"
             )
         if issues:
-            raise ValueError("Weak Argon2 parameters: " + "; ".join(issues))
+            raise KdfError("Weak Argon2 parameters: " + "; ".join(issues))
 
     @classmethod
     def default(cls, salt: bytes | None = None) -> Argon2Config:
@@ -164,9 +166,9 @@ class AesKdfConfig:
     def __post_init__(self) -> None:
         """Validate configuration."""
         if len(self.salt) != 32:
-            raise ValueError("AES-KDF salt must be exactly 32 bytes")
+            raise KdfError("AES-KDF salt must be exactly 32 bytes")
         if self.rounds < 1:
-            raise ValueError("AES-KDF rounds must be at least 1")
+            raise KdfError("AES-KDF rounds must be at least 1")
 
 
 def derive_key_argon2(
@@ -227,7 +229,7 @@ def derive_key_aes_kdf(
         ValueError: If password is not 32 bytes
     """
     if len(password) != 32:
-        raise ValueError("AES-KDF requires 32-byte input")
+        raise KdfError("AES-KDF requires 32-byte input")
 
     from Cryptodome.Cipher import AES
 
@@ -294,7 +296,7 @@ def _process_keyfile(keyfile_data: bytes) -> bytes:
                     expected_hash = bytes.fromhex(data_elem.attrib["Hash"])
                     computed_hash = hashlib.sha256(key_bytes).digest()[:4]
                     if not constant_time_compare(expected_hash, computed_hash):
-                        raise ValueError("Keyfile hash verification failed")
+                        raise InvalidKeyFileError("Keyfile hash verification failed")
                 return key_bytes
     except (ET.ParseError, ValueError, AttributeError):
         pass  # Not an XML keyfile
@@ -336,7 +338,7 @@ def derive_composite_key(
         ValueError: If neither password nor keyfile is provided
     """
     if password is None and keyfile_data is None:
-        raise ValueError("At least one credential required")
+        raise MissingCredentialsError()
 
     parts: list[bytes] = []
     secure_parts: list[SecureBytes] = []

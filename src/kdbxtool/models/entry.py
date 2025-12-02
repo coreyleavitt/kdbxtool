@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid as uuid_module
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .times import Times
 
@@ -35,7 +35,7 @@ class StringField:
     """
 
     key: str
-    value: Optional[str] = None
+    value: str | None = None
     protected: bool = False
 
 
@@ -51,8 +51,8 @@ class AutoType:
     """
 
     enabled: bool = True
-    sequence: Optional[str] = None
-    window: Optional[str] = None
+    sequence: str | None = None
+    window: str | None = None
     obfuscation: int = 0
 
 
@@ -100,13 +100,13 @@ class Entry:
     binaries: list[BinaryRef] = field(default_factory=list)
     autotype: AutoType = field(default_factory=AutoType)
     history: list[HistoryEntry] = field(default_factory=list)
-    foreground_color: Optional[str] = None
-    background_color: Optional[str] = None
-    override_url: Optional[str] = None
+    foreground_color: str | None = None
+    background_color: str | None = None
+    override_url: str | None = None
     quality_check: bool = True
 
     # Runtime reference to parent group (not serialized)
-    _parent: Optional[Group] = field(default=None, repr=False, compare=False)
+    _parent: Group | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Initialize default string fields if not present."""
@@ -118,74 +118,74 @@ class Entry:
     # --- Standard field properties ---
 
     @property
-    def title(self) -> Optional[str]:
+    def title(self) -> str | None:
         """Get or set entry title."""
         return self.strings.get("Title", StringField("Title")).value
 
     @title.setter
-    def title(self, value: Optional[str]) -> None:
+    def title(self, value: str | None) -> None:
         if "Title" not in self.strings:
             self.strings["Title"] = StringField("Title")
         self.strings["Title"].value = value
 
     @property
-    def username(self) -> Optional[str]:
+    def username(self) -> str | None:
         """Get or set entry username."""
         return self.strings.get("UserName", StringField("UserName")).value
 
     @username.setter
-    def username(self, value: Optional[str]) -> None:
+    def username(self, value: str | None) -> None:
         if "UserName" not in self.strings:
             self.strings["UserName"] = StringField("UserName")
         self.strings["UserName"].value = value
 
     @property
-    def password(self) -> Optional[str]:
+    def password(self) -> str | None:
         """Get or set entry password."""
         return self.strings.get("Password", StringField("Password")).value
 
     @password.setter
-    def password(self, value: Optional[str]) -> None:
+    def password(self, value: str | None) -> None:
         if "Password" not in self.strings:
             self.strings["Password"] = StringField("Password", protected=True)
         self.strings["Password"].value = value
 
     @property
-    def url(self) -> Optional[str]:
+    def url(self) -> str | None:
         """Get or set entry URL."""
         return self.strings.get("URL", StringField("URL")).value
 
     @url.setter
-    def url(self, value: Optional[str]) -> None:
+    def url(self, value: str | None) -> None:
         if "URL" not in self.strings:
             self.strings["URL"] = StringField("URL")
         self.strings["URL"].value = value
 
     @property
-    def notes(self) -> Optional[str]:
+    def notes(self) -> str | None:
         """Get or set entry notes."""
         return self.strings.get("Notes", StringField("Notes")).value
 
     @notes.setter
-    def notes(self, value: Optional[str]) -> None:
+    def notes(self, value: str | None) -> None:
         if "Notes" not in self.strings:
             self.strings["Notes"] = StringField("Notes")
         self.strings["Notes"].value = value
 
     @property
-    def otp(self) -> Optional[str]:
+    def otp(self) -> str | None:
         """Get or set OTP secret (TOTP/HOTP)."""
         return self.strings.get("otp", StringField("otp")).value
 
     @otp.setter
-    def otp(self, value: Optional[str]) -> None:
+    def otp(self, value: str | None) -> None:
         if "otp" not in self.strings:
             self.strings["otp"] = StringField("otp", protected=True)
         self.strings["otp"].value = value
 
     # --- Custom properties ---
 
-    def get_custom_property(self, key: str) -> Optional[str]:
+    def get_custom_property(self, key: str) -> str | None:
         """Get a custom property value.
 
         Args:
@@ -236,7 +236,7 @@ class Entry:
         del self.strings[key]
 
     @property
-    def custom_properties(self) -> dict[str, Optional[str]]:
+    def custom_properties(self) -> dict[str, str | None]:
         """Get all custom properties as a dictionary."""
         return {
             k: v.value
@@ -247,7 +247,7 @@ class Entry:
     # --- Convenience methods ---
 
     @property
-    def parent(self) -> Optional[Group]:
+    def parent(self) -> Group | None:
         """Get parent group."""
         return self._parent
 
@@ -280,12 +280,12 @@ class Entry:
     @classmethod
     def create(
         cls,
-        title: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        url: Optional[str] = None,
-        notes: Optional[str] = None,
-        tags: Optional[list[str]] = None,
+        title: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        url: str | None = None,
+        notes: str | None = None,
+        tags: list[str] | None = None,
         icon_id: str = "0",
         expires: bool = False,
         expiry_time: datetime | None = None,

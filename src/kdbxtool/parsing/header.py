@@ -11,6 +11,7 @@ https://keepass.info/help/kb/kdbx_4.html
 
 from __future__ import annotations
 
+import contextlib
 import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -183,10 +184,8 @@ class KdbxHeader:
             field_data = data[offset : offset + field_len]
             offset += field_len
 
-            try:
+            with contextlib.suppress(ValueError):
                 header_fields[HeaderFieldType(field_type)] = field_data
-            except ValueError:
-                pass  # Unknown field type, ignore
 
             if field_type == HeaderFieldType.END:
                 break
@@ -283,7 +282,11 @@ class KdbxHeader:
             iterations = kdf_params.get("I")
             parallelism = kdf_params.get("P")
 
-            if not isinstance(memory, int) or not isinstance(iterations, int) or not isinstance(parallelism, int):
+            if (
+                not isinstance(memory, int)
+                or not isinstance(iterations, int)
+                or not isinstance(parallelism, int)
+            ):
                 raise ValueError("Missing or invalid Argon2 parameters")
 
             argon2_memory = memory // 1024  # Convert bytes to KiB

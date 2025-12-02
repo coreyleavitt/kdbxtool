@@ -14,16 +14,22 @@ import binascii
 import hashlib
 import os
 import uuid as uuid_module
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Iterator, Optional, Protocol, Union, cast
+from typing import Protocol, cast
 from xml.etree.ElementTree import Element, SubElement, tostring
 
+from Cryptodome.Cipher import ChaCha20, Salsa20
 from defusedxml import ElementTree as DefusedET
 
-from Cryptodome.Cipher import ChaCha20, Salsa20
+from .models import Entry, Group, HistoryEntry, Times
+from .models.entry import AutoType, BinaryRef, StringField
+from .parsing import CompressionType, KdbxHeader, KdbxVersion
+from .parsing.kdbx4 import InnerHeader, read_kdbx4, write_kdbx4
+from .security import Cipher, KdfType
 
 
 class _StreamCipher(Protocol):
@@ -31,20 +37,6 @@ class _StreamCipher(Protocol):
 
     def encrypt(self, plaintext: bytes) -> bytes: ...
     def decrypt(self, ciphertext: bytes) -> bytes: ...
-
-from .models import Entry, Group, HistoryEntry, Times
-from .models.entry import AutoType, BinaryRef, StringField
-from .parsing import CompressionType, KdbxHeader, KdbxVersion
-from .parsing.kdbx4 import (
-    DecryptedPayload,
-    InnerHeader,
-    read_kdbx4,
-    write_kdbx4,
-)
-from .security import Cipher, KdfType
-
-if TYPE_CHECKING:
-    pass
 
 
 # KDBX4 time format (ISO 8601, compatible with KeePassXC)
@@ -124,7 +116,7 @@ class DatabaseSettings:
     database_description: str = ""
     default_username: str = ""
     maintenance_history_days: int = 365
-    color: Optional[str] = None
+    color: str | None = None
     master_key_change_rec: int = -1
     master_key_change_force: int = -1
     memory_protection: dict[str, bool] = field(
@@ -137,7 +129,7 @@ class DatabaseSettings:
         }
     )
     recycle_bin_enabled: bool = True
-    recycle_bin_uuid: Optional[uuid_module.UUID] = None
+    recycle_bin_uuid: uuid_module.UUID | None = None
     history_max_items: int = 10
     history_max_size: int = 6 * 1024 * 1024  # 6 MiB
 
@@ -169,10 +161,10 @@ class Database:
     def __init__(
         self,
         root_group: Group,
-        settings: Optional[DatabaseSettings] = None,
-        header: Optional[KdbxHeader] = None,
-        inner_header: Optional[InnerHeader] = None,
-        binaries: Optional[dict[int, bytes]] = None,
+        settings: DatabaseSettings | None = None,
+        header: KdbxHeader | None = None,
+        inner_header: InnerHeader | None = None,
+        binaries: dict[int, bytes] | None = None,
     ) -> None:
         """Initialize database.
 
@@ -190,11 +182,11 @@ class Database:
         self._header = header
         self._inner_header = inner_header
         self._binaries = binaries or {}
-        self._password: Optional[str] = None
-        self._keyfile_data: Optional[bytes] = None
-        self._filepath: Optional[Path] = None
+        self._password: str | None = None
+        self._keyfile_data: bytes | None = None
+        self._filepath: Path | None = None
 
-    def __enter__(self) -> "Database":
+    def __enter__(self) -> Database:
         """Enter context manager."""
         return self
 
@@ -239,7 +231,7 @@ class Database:
         return self._settings
 
     @property
-    def filepath(self) -> Optional[Path]:
+    def filepath(self) -> Path | None:
         """Get the file path (if opened from file)."""
         return self._filepath
 
@@ -248,9 +240,9 @@ class Database:
     @classmethod
     def open(
         cls,
-        filepath: Union[str, Path],
-        password: Optional[str] = None,
-        keyfile: Optional[Union[str, Path]] = None,
+        filepath: str | Path,
+        password: str | None = None,
+        keyfile: str | Path | None = None,
     ) -> Database:
         """Open an existing KDBX database.
 
@@ -290,9 +282,9 @@ class Database:
     def open_bytes(
         cls,
         data: bytes,
-        password: Optional[str] = None,
-        keyfile_data: Optional[bytes] = None,
-        filepath: Optional[Path] = None,
+        password: str | None = None,
+        keyfile_data: bytes | None = None,
+        filepath: Path | None = None,
     ) -> Database:
         """Open a KDBX database from bytes.
 
@@ -331,9 +323,9 @@ class Database:
     @classmethod
     def create(
         cls,
-        filepath: Optional[Union[str, Path]] = None,
-        password: Optional[str] = None,
-        keyfile: Optional[Union[str, Path]] = None,
+        filepath: str | Path | None = None,
+        password: str | None = None,
+        keyfile: str | Path | None = None,
         database_name: str = "Database",
         cipher: Cipher = Cipher.AES256_CBC,
         kdf_type: KdfType = KdfType.ARGON2ID,
@@ -410,7 +402,7 @@ class Database:
 
     # --- Saving databases ---
 
-    def save(self, filepath: Optional[Union[str, Path]] = None) -> None:
+    def save(self, filepath: str | Path | None = None) -> None:
         """Save the database to a file.
 
         Args:
@@ -477,8 +469,8 @@ class Database:
 
     def set_credentials(
         self,
-        password: Optional[str] = None,
-        keyfile_data: Optional[bytes] = None,
+        password: str | None = None,
+        keyfile_data: bytes | None = None,
     ) -> None:
         """Set or update database credentials.
 
@@ -498,11 +490,11 @@ class Database:
 
     def find_entries(
         self,
-        title: Optional[str] = None,
-        username: Optional[str] = None,
-        url: Optional[str] = None,
-        tags: Optional[list[str]] = None,
-        uuid: Optional[uuid_module.UUID] = None,
+        title: str | None = None,
+        username: str | None = None,
+        url: str | None = None,
+        tags: list[str] | None = None,
+        uuid: uuid_module.UUID | None = None,
         recursive: bool = True,
     ) -> list[Entry]:
         """Find entries matching criteria.
@@ -532,8 +524,8 @@ class Database:
 
     def find_groups(
         self,
-        name: Optional[str] = None,
-        uuid: Optional[uuid_module.UUID] = None,
+        name: str | None = None,
+        uuid: uuid_module.UUID | None = None,
         recursive: bool = True,
     ) -> list[Group]:
         """Find groups matching criteria.
@@ -554,10 +546,10 @@ class Database:
 
     def find_entries_contains(
         self,
-        title: Optional[str] = None,
-        username: Optional[str] = None,
-        url: Optional[str] = None,
-        notes: Optional[str] = None,
+        title: str | None = None,
+        username: str | None = None,
+        url: str | None = None,
+        notes: str | None = None,
         recursive: bool = True,
         case_sensitive: bool = False,
     ) -> list[Entry]:
@@ -587,10 +579,10 @@ class Database:
 
     def find_entries_regex(
         self,
-        title: Optional[str] = None,
-        username: Optional[str] = None,
-        url: Optional[str] = None,
-        notes: Optional[str] = None,
+        title: str | None = None,
+        username: str | None = None,
+        url: str | None = None,
+        notes: str | None = None,
         recursive: bool = True,
         case_sensitive: bool = False,
     ) -> list[Entry]:
@@ -658,9 +650,9 @@ class Database:
         Args:
             entry: Entry to apply policy to
         """
-        for key, field in entry.strings.items():
+        for key, string_field in entry.strings.items():
             if key in self._settings.memory_protection:
-                field.protected = self._settings.memory_protection[key]
+                string_field.protected = self._settings.memory_protection[key]
 
     def apply_protection_policy_all(self) -> None:
         """Apply memory protection policy to all entries in the database.
@@ -780,7 +772,7 @@ class Database:
 
     @classmethod
     def _parse_xml(
-        cls, xml_data: bytes, inner_header: Optional[InnerHeader] = None
+        cls, xml_data: bytes, inner_header: InnerHeader | None = None
     ) -> tuple[Group, DatabaseSettings, dict[int, bytes]]:
         """Parse KDBX XML into models.
 
@@ -816,7 +808,7 @@ class Database:
         # The protection flag indicates memory protection policy, not encryption
         binaries: dict[int, bytes] = {}
         if inner_header is not None:
-            for idx, (protected, data) in inner_header.binaries.items():
+            for idx, (_protected, data) in inner_header.binaries.items():
                 binaries[idx] = data
 
         return root_group, settings, binaries
@@ -845,14 +837,14 @@ class Database:
                     pass
 
     @classmethod
-    def _parse_meta(cls, meta_elem: Optional[Element]) -> DatabaseSettings:
+    def _parse_meta(cls, meta_elem: Element | None) -> DatabaseSettings:
         """Parse Meta element into DatabaseSettings."""
         settings = DatabaseSettings()
 
         if meta_elem is None:
             return settings
 
-        def get_text(tag: str) -> Optional[str]:
+        def get_text(tag: str) -> str | None:
             elem = meta_elem.find(tag)
             return elem.text if elem is not None else None
 
@@ -877,12 +869,12 @@ class Database:
         if rb := get_text("RecycleBinEnabled"):
             settings.recycle_bin_enabled = rb == "True"
         if rb_uuid := get_text("RecycleBinUUID"):
-            try:
+            import contextlib
+
+            with contextlib.suppress(binascii.Error, ValueError):
                 settings.recycle_bin_uuid = uuid_module.UUID(
                     bytes=base64.b64decode(rb_uuid)
                 )
-            except (binascii.Error, ValueError):
-                pass
 
         return settings
 
@@ -944,7 +936,8 @@ class Database:
         # Tags
         tags_elem = elem.find("Tags")
         if tags_elem is not None and tags_elem.text:
-            entry.tags = [t.strip() for t in tags_elem.text.replace(",", ";").split(";") if t.strip()]
+            tag_text = tags_elem.text.replace(",", ";")
+            entry.tags = [t.strip() for t in tag_text.split(";") if t.strip()]
 
         # Times
         entry.times = cls._parse_times(elem.find("Times"))
@@ -999,14 +992,14 @@ class Database:
         return entry
 
     @classmethod
-    def _parse_times(cls, times_elem: Optional[Element]) -> Times:
+    def _parse_times(cls, times_elem: Element | None) -> Times:
         """Parse Times element into Times model."""
         times = Times.create_new()
 
         if times_elem is None:
             return times
 
-        def parse_time(tag: str) -> Optional[datetime]:
+        def parse_time(tag: str) -> datetime | None:
             elem = times_elem.find(tag)
             if elem is not None and elem.text:
                 return cls._decode_time(elem.text)
@@ -1049,14 +1042,14 @@ class Database:
                     import struct
                     seconds = struct.unpack("<q", binary)[0]
                     # Convert to datetime (epoch is 0001-01-01)
-                    base = datetime(1, 1, 1, tzinfo=timezone.utc)
+                    base = datetime(1, 1, 1, tzinfo=UTC)
                     return base + timedelta(seconds=seconds)
             except (ValueError, struct.error):
                 pass  # Not valid base64 or wrong size
 
         # Try ISO format
         try:
-            return datetime.strptime(time_str, KDBX4_TIME_FORMAT).replace(tzinfo=timezone.utc)
+            return datetime.strptime(time_str, KDBX4_TIME_FORMAT).replace(tzinfo=UTC)
         except ValueError:
             pass
 
@@ -1064,7 +1057,7 @@ class Database:
         try:
             return datetime.fromisoformat(time_str.replace("Z", "+00:00"))
         except ValueError:
-            return datetime.now(timezone.utc)
+            return datetime.now(UTC)
 
     @classmethod
     def _encode_time(cls, dt: datetime) -> str:
@@ -1075,7 +1068,7 @@ class Database:
         """
         # Ensure UTC timezone
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt.strftime(KDBX4_TIME_FORMAT)
 
     # --- XML building ---
@@ -1134,8 +1127,8 @@ class Database:
 
         # Memory protection
         mp = SubElement(meta, "MemoryProtection")
-        for field, protected in s.memory_protection.items():
-            SubElement(mp, f"Protect{field}").text = str(protected)
+        for field_name, is_protected in s.memory_protection.items():
+            SubElement(mp, f"Protect{field_name}").text = str(is_protected)
 
         SubElement(meta, "RecycleBinEnabled").text = str(s.recycle_bin_enabled)
         if s.recycle_bin_uuid:
@@ -1204,17 +1197,17 @@ class Database:
         self._build_times(elem, entry.times)
 
         # String fields - apply memory protection policy from database settings
-        for key, field in entry.strings.items():
+        for key, string_field in entry.strings.items():
             string_elem = SubElement(elem, "String")
             SubElement(string_elem, "Key").text = key
             value_elem = SubElement(string_elem, "Value")
-            value_elem.text = field.value or ""
+            value_elem.text = string_field.value or ""
             # Use database memory_protection policy for standard fields,
-            # fall back to field.protected for custom fields
+            # fall back to string_field.protected for custom fields
             if key in self._settings.memory_protection:
                 should_protect = self._settings.memory_protection[key]
             else:
-                should_protect = field.protected
+                should_protect = string_field.protected
             if should_protect:
                 value_elem.set("Protected", "True")
 
@@ -1248,7 +1241,9 @@ class Database:
         elem = SubElement(parent, "Times")
 
         SubElement(elem, "CreationTime").text = self._encode_time(times.creation_time)
-        SubElement(elem, "LastModificationTime").text = self._encode_time(times.last_modification_time)
+        SubElement(elem, "LastModificationTime").text = self._encode_time(
+            times.last_modification_time
+        )
         SubElement(elem, "LastAccessTime").text = self._encode_time(times.last_access_time)
         if times.expiry_time:
             SubElement(elem, "ExpiryTime").text = self._encode_time(times.expiry_time)
@@ -1262,4 +1257,5 @@ class Database:
     def __str__(self) -> str:
         entry_count = sum(1 for _ in self.iter_entries())
         group_count = sum(1 for _ in self.iter_groups())
-        return f'Database: "{self._settings.database_name}" ({entry_count} entries, {group_count} groups)'
+        name = self._settings.database_name
+        return f'Database: "{name}" ({entry_count} entries, {group_count} groups)'

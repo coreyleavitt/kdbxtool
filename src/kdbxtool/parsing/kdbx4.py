@@ -20,8 +20,6 @@ from __future__ import annotations
 
 import gzip
 import hashlib
-import hmac
-import io
 import struct
 import warnings
 from dataclasses import dataclass
@@ -277,7 +275,7 @@ class Kdbx4Reader:
                     struct.pack("<Q", block_index) + struct.pack("<I", 0),
                 )
                 if not constant_time_compare(expected, block_hmac):
-                    raise ValueError(f"HMAC verification failed for final block")
+                    raise ValueError("HMAC verification failed for final block")
                 break
 
             block_data = self._read_bytes(block_len)

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 import uuid as uuid_module
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Iterator, Optional
 
 from .entry import Entry
 from .times import Times
@@ -34,25 +34,25 @@ class Group:
     """
 
     uuid: uuid_module.UUID = field(default_factory=uuid_module.uuid4)
-    name: Optional[str] = None
-    notes: Optional[str] = None
+    name: str | None = None
+    notes: str | None = None
     times: Times = field(default_factory=Times.create_new)
     icon_id: str = "48"  # Default folder icon
     is_expanded: bool = True
-    default_autotype_sequence: Optional[str] = None
-    enable_autotype: Optional[bool] = None  # None = inherit from parent
-    enable_searching: Optional[bool] = None  # None = inherit from parent
-    last_top_visible_entry: Optional[uuid_module.UUID] = None
+    default_autotype_sequence: str | None = None
+    enable_autotype: bool | None = None  # None = inherit from parent
+    enable_searching: bool | None = None  # None = inherit from parent
+    last_top_visible_entry: uuid_module.UUID | None = None
     entries: list[Entry] = field(default_factory=list)
     subgroups: list[Group] = field(default_factory=list)
 
     # Runtime reference to parent group (not serialized)
-    _parent: Optional[Group] = field(default=None, repr=False, compare=False)
+    _parent: Group | None = field(default=None, repr=False, compare=False)
     # Flag for root group
     _is_root: bool = field(default=False, repr=False)
 
     @property
-    def parent(self) -> Optional[Group]:
+    def parent(self) -> Group | None:
         """Get parent group, or None if this is the root."""
         return self._parent
 
@@ -72,7 +72,7 @@ class Group:
         if self.is_root_group or self._parent is None:
             return []
         parts: list[str] = []
-        current: Optional[Group] = self
+        current: Group | None = self
         while current is not None and not current.is_root_group:
             if current.name is not None:
                 parts.insert(0, current.name)
@@ -121,12 +121,12 @@ class Group:
 
     def create_entry(
         self,
-        title: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        url: Optional[str] = None,
-        notes: Optional[str] = None,
-        tags: Optional[list[str]] = None,
+        title: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        url: str | None = None,
+        notes: str | None = None,
+        tags: list[str] | None = None,
     ) -> Entry:
         """Create and add a new entry to this group.
 
@@ -185,7 +185,7 @@ class Group:
     def create_subgroup(
         self,
         name: str,
-        notes: Optional[str] = None,
+        notes: str | None = None,
         icon_id: str = "48",
     ) -> Group:
         """Create and add a new subgroup.
@@ -233,7 +233,7 @@ class Group:
 
     def find_entry_by_uuid(
         self, uuid: uuid_module.UUID, recursive: bool = True
-    ) -> Optional[Entry]:
+    ) -> Entry | None:
         """Find an entry by UUID.
 
         Args:
@@ -250,7 +250,7 @@ class Group:
 
     def find_group_by_uuid(
         self, uuid: uuid_module.UUID, recursive: bool = True
-    ) -> Optional[Group]:
+    ) -> Group | None:
         """Find a group by UUID.
 
         Args:
@@ -269,10 +269,10 @@ class Group:
 
     def find_entries(
         self,
-        title: Optional[str] = None,
-        username: Optional[str] = None,
-        url: Optional[str] = None,
-        tags: Optional[list[str]] = None,
+        title: str | None = None,
+        username: str | None = None,
+        url: str | None = None,
+        tags: list[str] | None = None,
         recursive: bool = True,
     ) -> list[Entry]:
         """Find entries matching criteria.
@@ -304,10 +304,10 @@ class Group:
 
     def find_entries_contains(
         self,
-        title: Optional[str] = None,
-        username: Optional[str] = None,
-        url: Optional[str] = None,
-        notes: Optional[str] = None,
+        title: str | None = None,
+        username: str | None = None,
+        url: str | None = None,
+        notes: str | None = None,
         recursive: bool = True,
         case_sensitive: bool = False,
     ) -> list[Entry]:
@@ -327,7 +327,7 @@ class Group:
             List of matching entries
         """
 
-        def contains(field_value: Optional[str], search: str) -> bool:
+        def contains(field_value: str | None, search: str) -> bool:
             if field_value is None:
                 return False
             if case_sensitive:
@@ -349,10 +349,10 @@ class Group:
 
     def find_entries_regex(
         self,
-        title: Optional[str] = None,
-        username: Optional[str] = None,
-        url: Optional[str] = None,
-        notes: Optional[str] = None,
+        title: str | None = None,
+        username: str | None = None,
+        url: str | None = None,
+        notes: str | None = None,
         recursive: bool = True,
         case_sensitive: bool = False,
     ) -> list[Entry]:
@@ -386,7 +386,7 @@ class Group:
         if notes is not None:
             patterns["notes"] = re.compile(notes, flags)
 
-        def matches(field_value: Optional[str], pattern: re.Pattern[str]) -> bool:
+        def matches(field_value: str | None, pattern: re.Pattern[str]) -> bool:
             if field_value is None:
                 return False
             return pattern.search(field_value) is not None
@@ -406,7 +406,7 @@ class Group:
 
     def find_groups(
         self,
-        name: Optional[str] = None,
+        name: str | None = None,
         recursive: bool = True,
     ) -> list[Group]:
         """Find groups matching criteria.

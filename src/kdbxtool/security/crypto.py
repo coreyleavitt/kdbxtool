@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from Cryptodome.Cipher import AES, ChaCha20
 
 if TYPE_CHECKING:
-    from .memory import SecureBytes
+    pass
 
 
 class Cipher(Enum):

@@ -781,6 +781,104 @@ class Database:
 
         group.move_to(destination)
 
+    # --- Recycle bin operations ---
+
+    @property
+    def recyclebin_group(self) -> Group | None:
+        """Get the recycle bin group, or None if disabled.
+
+        If recycle_bin_enabled is True but no recycle bin exists yet,
+        this creates one automatically.
+
+        Returns:
+            Recycle bin Group, or None if recycle bin is disabled
+        """
+        if not self._settings.recycle_bin_enabled:
+            return None
+
+        # Try to find existing recycle bin
+        if self._settings.recycle_bin_uuid is not None:
+            group = self._root_group.find_group_by_uuid(self._settings.recycle_bin_uuid)
+            if group is not None:
+                return group
+
+        # Create new recycle bin
+        recycle_bin = Group(name="Recycle Bin", icon_id="43")
+        self._root_group.add_subgroup(recycle_bin)
+        self._settings.recycle_bin_uuid = recycle_bin.uuid
+        return recycle_bin
+
+    def trash_entry(self, entry: Entry) -> None:
+        """Move an entry to the recycle bin.
+
+        If the entry is already in the recycle bin, it is permanently deleted.
+
+        Args:
+            entry: Entry to trash
+
+        Raises:
+            ValueError: If entry is not in this database
+            ValueError: If recycle bin is disabled
+        """
+        # Validate entry is in this database
+        if entry.parent is None:
+            raise ValueError("Entry has no parent group")
+        found = self._root_group.find_entry_by_uuid(entry.uuid)
+        if found is None:
+            raise ValueError("Entry is not in this database")
+
+        recycle_bin = self.recyclebin_group
+        if recycle_bin is None:
+            raise ValueError("Recycle bin is disabled")
+
+        # If already in recycle bin, delete permanently
+        if entry.parent is recycle_bin:
+            recycle_bin.remove_entry(entry)
+            return
+
+        # Move to recycle bin
+        entry.move_to(recycle_bin)
+
+    def trash_group(self, group: Group) -> None:
+        """Move a group to the recycle bin.
+
+        If the group is already in the recycle bin, it is permanently deleted.
+        Cannot trash the root group or the recycle bin itself.
+
+        Args:
+            group: Group to trash
+
+        Raises:
+            ValueError: If group is not in this database
+            ValueError: If group is the root group
+            ValueError: If group is the recycle bin
+            ValueError: If recycle bin is disabled
+        """
+        # Validate group
+        if group.is_root_group:
+            raise ValueError("Cannot trash the root group")
+        if group.parent is None:
+            raise ValueError("Group has no parent")
+        found = self._root_group.find_group_by_uuid(group.uuid)
+        if found is None:
+            raise ValueError("Group is not in this database")
+
+        recycle_bin = self.recyclebin_group
+        if recycle_bin is None:
+            raise ValueError("Recycle bin is disabled")
+
+        # Cannot trash the recycle bin itself
+        if group is recycle_bin:
+            raise ValueError("Cannot trash the recycle bin")
+
+        # If already in recycle bin, delete permanently
+        if group.parent is recycle_bin:
+            recycle_bin.remove_subgroup(group)
+            return
+
+        # Move to recycle bin
+        group.move_to(recycle_bin)
+
     # --- Memory protection ---
 
     def apply_protection_policy(self, entry: Entry) -> None:

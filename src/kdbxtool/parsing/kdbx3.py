@@ -64,12 +64,14 @@ class Kdbx3Reader:
         self,
         password: str | None = None,
         keyfile_data: bytes | None = None,
+        transformed_key: bytes | None = None,
     ) -> DecryptedPayload:
         """Decrypt the KDBX3 file.
 
         Args:
             password: Optional password
             keyfile_data: Optional keyfile contents
+            transformed_key: Optional pre-computed transformed key (skips KDF)
 
         Returns:
             DecryptedPayload with header, synthetic inner header, and XML
@@ -86,14 +88,18 @@ class Kdbx3Reader:
 
         self._ctx.offset = header_end
 
-        # Derive composite key from credentials
-        composite_key = derive_composite_key(
-            password=password,
-            keyfile_data=keyfile_data,
-        )
+        # Use pre-computed transformed key if provided, otherwise derive it
+        if transformed_key is not None:
+            master_key = SecureBytes(transformed_key)
+        else:
+            # Derive composite key from credentials
+            composite_key = derive_composite_key(
+                password=password,
+                keyfile_data=keyfile_data,
+            )
 
-        # Derive master key using AES-KDF
-        master_key = self._derive_master_key(header, composite_key)
+            # Derive master key using AES-KDF
+            master_key = self._derive_master_key(header, composite_key)
 
         # Derive cipher key
         cipher_key = self._derive_cipher_key(master_key.data, header.master_seed)
@@ -134,6 +140,7 @@ class Kdbx3Reader:
             header=header,
             inner_header=inner_header,
             xml_data=payload_data,
+            transformed_key=master_key.data,
         )
 
     def _derive_master_key(
@@ -252,6 +259,7 @@ def read_kdbx3(
     data: bytes,
     password: str | None = None,
     keyfile_data: bytes | None = None,
+    transformed_key: bytes | None = None,
 ) -> DecryptedPayload:
     """Read and decrypt a KDBX3 database.
 
@@ -259,6 +267,7 @@ def read_kdbx3(
         data: Complete KDBX3 file contents
         password: Optional password
         keyfile_data: Optional keyfile contents
+        transformed_key: Optional pre-computed transformed key (skips KDF)
 
     Returns:
         DecryptedPayload containing header, inner header, and XML data
@@ -269,4 +278,8 @@ def read_kdbx3(
         UnsupportedVersionError: If file is not KDBX3
     """
     reader = Kdbx3Reader(data)
-    return reader.decrypt(password=password, keyfile_data=keyfile_data)
+    return reader.decrypt(
+        password=password,
+        keyfile_data=keyfile_data,
+        transformed_key=transformed_key,
+    )

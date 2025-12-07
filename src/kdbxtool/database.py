@@ -214,6 +214,7 @@ class Database:
         self._binaries = binaries or {}
         self._password: str | None = None
         self._keyfile_data: bytes | None = None
+        self._transformed_key: bytes | None = None
         self._filepath: Path | None = None
         # Set database reference on all entries and groups
         self._set_database_references(root_group)
@@ -259,6 +260,47 @@ class Database:
             except TypeError:
                 pass  # bytes is immutable, just dereference
             self._keyfile_data = None
+        # Clear transformed key
+        if self._transformed_key is not None:
+            try:
+                data = bytearray(self._transformed_key)
+                for i in range(len(data)):
+                    data[i] = 0
+            except TypeError:
+                pass
+            self._transformed_key = None
+
+    @property
+    def transformed_key(self) -> bytes | None:
+        """Get the transformed key for caching.
+
+        The transformed key is the result of applying the KDF (Argon2) to
+        the credentials. Caching this allows fast repeated database opens
+        without re-running the expensive KDF.
+
+        Security note: The transformed key is as sensitive as the password.
+        Anyone with this key can decrypt the database. Store securely and
+        zeroize when done.
+
+        Returns:
+            The transformed key, or None if not available (e.g., newly created DB)
+        """
+        return self._transformed_key
+
+    @property
+    def kdf_salt(self) -> bytes | None:
+        """Get the KDF salt used for key derivation.
+
+        The salt is used together with credentials to derive the transformed key.
+        If the salt changes (e.g., after save with regenerate_seeds=True),
+        any cached transformed_key becomes invalid.
+
+        Returns:
+            The KDF salt, or None if no header is set
+        """
+        if self._header is None:
+            return None
+        return self._header.kdf_salt
 
     @property
     def root_group(self) -> Group:
@@ -325,6 +367,7 @@ class Database:
         password: str | None = None,
         keyfile_data: bytes | None = None,
         filepath: Path | None = None,
+        transformed_key: bytes | None = None,
     ) -> Database:
         """Open a KDBX database from bytes.
 
@@ -336,6 +379,7 @@ class Database:
             password: Database password
             keyfile_data: Keyfile contents (optional)
             filepath: Original file path (for save)
+            transformed_key: Precomputed transformed key (skips KDF, faster opens)
 
         Returns:
             Database instance
@@ -357,7 +401,12 @@ class Database:
             )
             payload = read_kdbx3(data, password=password, keyfile_data=keyfile_data)
         else:
-            payload = read_kdbx4(data, password=password, keyfile_data=keyfile_data)
+            payload = read_kdbx4(
+                data,
+                password=password,
+                keyfile_data=keyfile_data,
+                transformed_key=transformed_key,
+            )
 
         # Parse XML into models (with protected value decryption)
         root_group, settings, binaries = cls._parse_xml(
@@ -373,6 +422,7 @@ class Database:
         )
         db._password = password
         db._keyfile_data = keyfile_data
+        db._transformed_key = payload.transformed_key
         db._filepath = filepath
         db._opened_as_kdbx3 = is_kdbx3
 
@@ -648,7 +698,10 @@ class Database:
         Raises:
             ValueError: If no credentials are set
         """
-        if self._password is None and self._keyfile_data is None:
+        # Need either credentials or a transformed key
+        has_credentials = self._password is not None or self._keyfile_data is not None
+        has_transformed_key = self._transformed_key is not None
+        if not has_credentials and not has_transformed_key:
             raise MissingCredentialsError()
 
         if self._header is None:
@@ -669,6 +722,8 @@ class Database:
             self._header.encryption_iv = os.urandom(self._header.cipher.iv_size)
             self._header.kdf_salt = os.urandom(32)
             self._inner_header.random_stream_key = os.urandom(64)
+            # Cached transformed_key is now invalid (salt changed)
+            self._transformed_key = None
 
         # Sync binaries to inner header (preserve protection flags where possible)
         existing_binaries = self._inner_header.binaries
@@ -687,12 +742,14 @@ class Database:
         xml_data = self._build_xml()
 
         # Encrypt and return
+        # Use cached transformed_key if available (faster), otherwise use credentials
         return write_kdbx4(
             header=self._header,
             inner_header=self._inner_header,
             xml_data=xml_data,
             password=self._password,
             keyfile_data=self._keyfile_data,
+            transformed_key=self._transformed_key,
         )
 
     def set_credentials(

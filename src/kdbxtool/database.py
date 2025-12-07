@@ -37,7 +37,7 @@ from .models.entry import AutoType, BinaryRef, StringField
 from .parsing import CompressionType, KdbxHeader, KdbxVersion
 from .parsing.kdbx3 import read_kdbx3
 from .parsing.kdbx4 import InnerHeader, read_kdbx4, write_kdbx4
-from .security import Cipher, KdfType
+from .security import Argon2Config, Cipher, KdfType
 
 
 class _StreamCipher(Protocol):
@@ -517,29 +517,37 @@ class Database:
 
     # --- Saving databases ---
 
-    def _upgrade_to_kdbx4(self) -> None:
+    def _upgrade_to_kdbx4(self, kdf_config: Argon2Config | None = None) -> None:
         """Upgrade KDBX3 database to KDBX4 format.
 
         This converts:
         - AES-KDF to Argon2id (with secure default parameters)
         - Salsa20 protected stream to ChaCha20
         - Generates new cryptographic material (seeds, IVs)
+
+        Args:
+            kdf_config: Optional Argon2 configuration. If not provided,
+                uses Argon2Config.standard() defaults.
         """
         if self._header is None:
             return
 
-        # Create new KDBX4 header with secure defaults
+        # Use provided config or standard defaults
+        if kdf_config is None:
+            kdf_config = Argon2Config.standard()
+
+        # Create new KDBX4 header with specified KDF settings
         self._header = KdbxHeader(
             version=KdbxVersion.KDBX4,
             cipher=self._header.cipher,  # Preserve cipher (AES, ChaCha20, or Twofish)
             compression=self._header.compression,
             master_seed=os.urandom(32),
             encryption_iv=os.urandom(self._header.cipher.iv_size),
-            kdf_type=KdfType.ARGON2ID,
-            kdf_salt=os.urandom(32),
-            argon2_memory_kib=64 * 1024,  # 64 MiB
-            argon2_iterations=3,
-            argon2_parallelism=4,
+            kdf_type=kdf_config.variant,
+            kdf_salt=kdf_config.salt,
+            argon2_memory_kib=kdf_config.memory_kib,
+            argon2_iterations=kdf_config.iterations,
+            argon2_parallelism=kdf_config.parallelism,
         )
 
         # Upgrade inner header to use ChaCha20 (more secure than Salsa20)
@@ -553,6 +561,7 @@ class Database:
         *,
         allow_upgrade: bool = False,
         regenerate_seeds: bool = True,
+        kdf_config: Argon2Config | None = None,
     ) -> None:
         """Save the database to a file.
 
@@ -567,6 +576,9 @@ class Database:
             regenerate_seeds: If True (default), regenerate all cryptographic seeds
                 (master_seed, encryption_iv, kdf_salt, random_stream_key) on save.
                 Set to False only for testing or when using pre-computed transformed keys.
+            kdf_config: Optional Argon2 configuration for KDBX3 upgrade. Use presets
+                like Argon2Config.standard(), Argon2Config.high_security(), or
+                Argon2Config.fast(). If not provided, uses standard() defaults.
 
         Raises:
             DatabaseError: If no filepath specified and database wasn't opened from file
@@ -583,7 +595,7 @@ class Database:
         if was_kdbx3 and not save_to_new_file and not allow_upgrade:
             raise Kdbx3UpgradeRequired()
 
-        data = self.to_bytes(regenerate_seeds=regenerate_seeds)
+        data = self.to_bytes(regenerate_seeds=regenerate_seeds, kdf_config=kdf_config)
         self._filepath.write_bytes(data)
 
         # After KDBX3 upgrade, reload to get proper KDBX4 state (including transformed_key)
@@ -690,7 +702,12 @@ class Database:
             if level and (not elem.tail or not elem.tail.strip()):
                 elem.tail = indent
 
-    def to_bytes(self, *, regenerate_seeds: bool = True) -> bytes:
+    def to_bytes(
+        self,
+        *,
+        regenerate_seeds: bool = True,
+        kdf_config: Argon2Config | None = None,
+    ) -> bytes:
         """Serialize the database to KDBX4 format.
 
         KDBX3 databases are automatically upgraded to KDBX4 on save.
@@ -702,6 +719,9 @@ class Database:
                 This prevents precomputation attacks where an attacker can derive
                 the encryption key in advance. Set to False only for testing or
                 when using pre-computed transformed keys.
+            kdf_config: Optional Argon2 configuration for KDBX3 upgrade. Use presets
+                like Argon2Config.standard(), Argon2Config.high_security(), or
+                Argon2Config.fast(). If not provided, uses standard() defaults.
 
         Returns:
             KDBX4 file contents as bytes
@@ -723,7 +743,7 @@ class Database:
 
         # Auto-upgrade KDBX3 to KDBX4
         if self._header.version == KdbxVersion.KDBX3:
-            self._upgrade_to_kdbx4()
+            self._upgrade_to_kdbx4(kdf_config=kdf_config)
 
         # Regenerate all cryptographic seeds to prevent precomputation attacks.
         # This ensures each save produces a file encrypted with fresh randomness.

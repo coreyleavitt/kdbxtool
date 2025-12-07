@@ -129,11 +129,30 @@ class Argon2Config:
     def default(cls, salt: bytes | None = None) -> Argon2Config:
         """Create configuration with secure defaults.
 
+        Alias for standard(). Provides balanced security and performance.
+
         Args:
             salt: Optional salt (32 random bytes generated if not provided)
 
         Returns:
             Argon2Config with recommended security parameters
+        """
+        return cls.standard(salt=salt)
+
+    @classmethod
+    def standard(cls, salt: bytes | None = None) -> Argon2Config:
+        """Create configuration with balanced security/performance.
+
+        Suitable for most use cases. Provides good security with
+        reasonable unlock times on modern hardware.
+
+        Parameters: 64 MiB memory, 3 iterations, 4 parallelism
+
+        Args:
+            salt: Optional salt (32 random bytes generated if not provided)
+
+        Returns:
+            Argon2Config with standard security parameters
         """
         import os
 
@@ -143,6 +162,60 @@ class Argon2Config:
             memory_kib=64 * 1024,  # 64 MiB
             iterations=3,
             parallelism=4,
+            salt=salt,
+            variant=KdfType.ARGON2ID,
+        )
+
+    @classmethod
+    def high_security(cls, salt: bytes | None = None) -> Argon2Config:
+        """Create configuration for high-security applications.
+
+        Use for sensitive data where longer unlock times are acceptable.
+        Provides stronger protection against brute-force attacks.
+
+        Parameters: 256 MiB memory, 10 iterations, 4 parallelism
+
+        Args:
+            salt: Optional salt (32 random bytes generated if not provided)
+
+        Returns:
+            Argon2Config with high security parameters
+        """
+        import os
+
+        if salt is None:
+            salt = os.urandom(32)
+        return cls(
+            memory_kib=256 * 1024,  # 256 MiB
+            iterations=10,
+            parallelism=4,
+            salt=salt,
+            variant=KdfType.ARGON2ID,
+        )
+
+    @classmethod
+    def fast(cls, salt: bytes | None = None) -> Argon2Config:
+        """Create configuration for fast operations (testing only).
+
+        WARNING: This provides minimal security and should only be used
+        for testing or development. Not suitable for production databases.
+
+        Parameters: 16 MiB memory, 3 iterations, 2 parallelism
+
+        Args:
+            salt: Optional salt (32 random bytes generated if not provided)
+
+        Returns:
+            Argon2Config with minimal parameters
+        """
+        import os
+
+        if salt is None:
+            salt = os.urandom(32)
+        return cls(
+            memory_kib=16 * 1024,  # 16 MiB (minimum secure)
+            iterations=3,
+            parallelism=2,
             salt=salt,
             variant=KdfType.ARGON2ID,
         )

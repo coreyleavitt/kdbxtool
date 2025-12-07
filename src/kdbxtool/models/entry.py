@@ -252,6 +252,20 @@ class Entry:
         return self._parent
 
     @property
+    def index(self) -> int:
+        """Get the index of this entry within its parent group.
+
+        Returns:
+            Zero-based index of this entry in the parent's entries list.
+
+        Raises:
+            ValueError: If entry has no parent group.
+        """
+        if self._parent is None:
+            raise ValueError("Entry has no parent group")
+        return self._parent.entries.index(self)
+
+    @property
     def expired(self) -> bool:
         """Check if entry has expired."""
         return self.times.expired
@@ -259,6 +273,39 @@ class Entry:
     def touch(self, modify: bool = False) -> None:
         """Update access time, optionally modification time."""
         self.times.touch(modify=modify)
+
+    def reindex(self, new_index: int) -> None:
+        """Move this entry to a new position within its parent group.
+
+        Args:
+            new_index: Target position (zero-based). Negative indices are
+                supported (e.g., -1 for last position).
+
+        Raises:
+            ValueError: If entry has no parent group.
+            IndexError: If new_index is out of range.
+        """
+        if self._parent is None:
+            raise ValueError("Entry has no parent group")
+
+        entries = self._parent.entries
+        current_index = entries.index(self)
+
+        # Handle negative indices
+        if new_index < 0:
+            new_index = len(entries) + new_index
+
+        # Validate bounds
+        if new_index < 0 or new_index >= len(entries):
+            raise IndexError(f"Index {new_index} out of range for {len(entries)} entries")
+
+        # No-op if already at target position
+        if current_index == new_index:
+            return
+
+        # Remove from current position and insert at new position
+        entries.pop(current_index)
+        entries.insert(new_index, self)
 
     def save_history(self) -> None:
         """Save current state to history before making changes."""

@@ -100,6 +100,26 @@ class ProtectedStreamCipher:
 
 
 @dataclass
+class CustomIcon:
+    """A custom icon in a KDBX database.
+
+    Custom icons are PNG images that can be assigned to entries and groups
+    for visual customization beyond the standard icon set.
+
+    Attributes:
+        uuid: Unique identifier for the icon
+        data: PNG image data
+        name: Optional display name for the icon
+        last_modification_time: When the icon was last modified
+    """
+
+    uuid: uuid_module.UUID
+    data: bytes
+    name: str | None = None
+    last_modification_time: datetime | None = None
+
+
+@dataclass
 class DatabaseSettings:
     """Settings for a KDBX database.
 
@@ -117,6 +137,7 @@ class DatabaseSettings:
         recycle_bin_uuid: UUID of recycle bin group
         history_max_items: Max history entries per entry
         history_max_size: Max history size in bytes
+        custom_icons: Dictionary of custom icons (UUID -> CustomIcon)
     """
 
     generator: str = "kdbxtool"
@@ -140,6 +161,7 @@ class DatabaseSettings:
     recycle_bin_uuid: uuid_module.UUID | None = None
     history_max_items: int = 10
     history_max_size: int = 6 * 1024 * 1024  # 6 MiB
+    custom_icons: dict[uuid_module.UUID, CustomIcon] = field(default_factory=dict)
 
 
 class Database:
@@ -193,6 +215,16 @@ class Database:
         self._password: str | None = None
         self._keyfile_data: bytes | None = None
         self._filepath: Path | None = None
+        # Set database reference on all entries and groups
+        self._set_database_references(root_group)
+
+    def _set_database_references(self, group: Group) -> None:
+        """Recursively set _database reference on a group and all its contents."""
+        group._database = self
+        for entry in group.entries:
+            entry._database = self
+        for subgroup in group.subgroups:
+            self._set_database_references(subgroup)
 
     def __enter__(self) -> Database:
         """Enter context manager."""
@@ -1121,6 +1153,87 @@ class Database:
         """
         return [binary_ref.key for binary_ref in entry.binaries]
 
+    # --- Custom icons ---
+
+    @property
+    def custom_icons(self) -> dict[uuid_module.UUID, CustomIcon]:
+        """Get dictionary of custom icons (UUID -> CustomIcon)."""
+        return self._settings.custom_icons
+
+    def get_custom_icon(self, uuid: uuid_module.UUID) -> bytes | None:
+        """Get custom icon data by UUID.
+
+        Args:
+            uuid: UUID of the custom icon
+
+        Returns:
+            PNG image data, or None if not found
+        """
+        icon = self._settings.custom_icons.get(uuid)
+        return icon.data if icon else None
+
+    def add_custom_icon(
+        self, data: bytes, name: str | None = None
+    ) -> uuid_module.UUID:
+        """Add a custom icon to the database.
+
+        Args:
+            data: PNG image data
+            name: Optional display name for the icon
+
+        Returns:
+            UUID of the new custom icon
+        """
+        icon_uuid = uuid_module.uuid4()
+        icon = CustomIcon(
+            uuid=icon_uuid,
+            data=data,
+            name=name,
+            last_modification_time=datetime.now(UTC),
+        )
+        self._settings.custom_icons[icon_uuid] = icon
+        return icon_uuid
+
+    def remove_custom_icon(self, uuid: uuid_module.UUID) -> bool:
+        """Remove a custom icon from the database.
+
+        Note: This does not update entries/groups that reference this icon.
+        They will continue to reference the now-missing UUID.
+
+        Args:
+            uuid: UUID of the custom icon to remove
+
+        Returns:
+            True if removed, False if not found
+        """
+        if uuid in self._settings.custom_icons:
+            del self._settings.custom_icons[uuid]
+            return True
+        return False
+
+    def find_custom_icon_by_name(self, name: str) -> uuid_module.UUID | None:
+        """Find a custom icon by name.
+
+        Args:
+            name: Name of the icon to find (must match exactly one icon)
+
+        Returns:
+            UUID of the matching icon, or None if not found
+
+        Raises:
+            ValueError: If multiple icons have the same name
+        """
+        matches = [
+            icon.uuid
+            for icon in self._settings.custom_icons.values()
+            if icon.name == name
+        ]
+        if len(matches) == 0:
+            return None
+        if len(matches) > 1:
+            raise ValueError(f"Multiple custom icons found with name: {name}")
+        return matches[0]
+
     # --- XML parsing ---
 
     @classmethod
@@ -1229,6 +1342,33 @@ class Database:
                     bytes=base64.b64decode(rb_uuid)
                 )
 
+        # Parse custom icons
+        custom_icons_elem = meta_elem.find("CustomIcons")
+        if custom_icons_elem is not None:
+            for icon_elem in custom_icons_elem.findall("Icon"):
+                icon_uuid_elem = icon_elem.find("UUID")
+                icon_data_elem = icon_elem.find("Data")
+                if icon_uuid_elem is not None and icon_uuid_elem.text and icon_data_elem is not None and icon_data_elem.text:
+                    try:
+                        icon_uuid = uuid_module.UUID(bytes=base64.b64decode(icon_uuid_elem.text))
+                        icon_data = base64.b64decode(icon_data_elem.text)
+                        icon_name = None
+                        name_elem = icon_elem.find("Name")
+                        if name_elem is not None:
+                            icon_name = name_elem.text
+                        icon_mtime = None
+                        mtime_elem = icon_elem.find("LastModificationTime")
+                        if mtime_elem is not None and mtime_elem.text:
+                            icon_mtime = cls._decode_time(mtime_elem.text)
+                        settings.custom_icons[icon_uuid] = CustomIcon(
+                            uuid=icon_uuid,
+                            data=icon_data,
+                            name=icon_name,
+                            last_modification_time=icon_mtime,
+                        )
+                    except (binascii.Error, ValueError):
+                        pass  # Skip invalid icon
+
         return settings
 
     @classmethod
@@ -1255,6 +1395,16 @@ class Database:
         icon_elem = elem.find("IconID")
         if icon_elem is not None and icon_elem.text:
             group.icon_id = icon_elem.text
+
+        # Custom icon UUID
+        custom_icon_elem = elem.find("CustomIconUUID")
+        if custom_icon_elem is not None and custom_icon_elem.text:
+            try:
+                group.custom_icon_uuid = uuid_module.UUID(
+                    bytes=base64.b64decode(custom_icon_elem.text)
+                )
+            except (binascii.Error, ValueError):
+                pass
 
         # Times
         group.times = cls._parse_times(elem.find("Times"))
@@ -1285,6 +1435,16 @@ class Database:
         icon_elem = elem.find("IconID")
         if icon_elem is not None and icon_elem.text:
             entry.icon_id = icon_elem.text
+
+        # Custom icon UUID
+        custom_icon_elem = elem.find("CustomIconUUID")
+        if custom_icon_elem is not None and custom_icon_elem.text:
+            try:
+                entry.custom_icon_uuid = uuid_module.UUID(
+                    bytes=base64.b64decode(custom_icon_elem.text)
+                )
+            except (binascii.Error, ValueError):
+                pass
 
         # Tags
         tags_elem = elem.find("Tags")
@@ -1497,6 +1657,24 @@ class Database:
         SubElement(meta, "HistoryMaxItems").text = str(s.history_max_items)
         SubElement(meta, "HistoryMaxSize").text = str(s.history_max_size)
 
+        # Custom icons
+        if s.custom_icons:
+            custom_icons_elem = SubElement(meta, "CustomIcons")
+            for icon in s.custom_icons.values():
+                icon_elem = SubElement(custom_icons_elem, "Icon")
+                SubElement(icon_elem, "UUID").text = base64.b64encode(
+                    icon.uuid.bytes
+                ).decode("ascii")
+                SubElement(icon_elem, "Data").text = base64.b64encode(
+                    icon.data
+                ).decode("ascii")
+                if icon.name:
+                    SubElement(icon_elem, "Name").text = icon.name
+                if icon.last_modification_time:
+                    SubElement(icon_elem, "LastModificationTime").text = self._encode_time(
+                        icon.last_modification_time
+                    )
+
     def _build_group(self, parent: Element, group: Group) -> None:
         """Build Group element from Group model."""
         elem = SubElement(parent, "Group")
@@ -1506,6 +1684,10 @@ class Database:
         if group.notes:
             SubElement(elem, "Notes").text = group.notes
         SubElement(elem, "IconID").text = group.icon_id
+        if group.custom_icon_uuid:
+            SubElement(elem, "CustomIconUUID").text = base64.b64encode(
+                group.custom_icon_uuid.bytes
+            ).decode("ascii")
 
         self._build_times(elem, group.times)
 
@@ -1536,6 +1718,10 @@ class Database:
 
         SubElement(elem, "UUID").text = base64.b64encode(entry.uuid.bytes).decode("ascii")
         SubElement(elem, "IconID").text = entry.icon_id
+        if entry.custom_icon_uuid:
+            SubElement(elem, "CustomIconUUID").text = base64.b64encode(
+                entry.custom_icon_uuid.bytes
+            ).decode("ascii")
 
         if entry.foreground_color:
             SubElement(elem, "ForegroundColor").text = entry.foreground_color

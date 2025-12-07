@@ -235,3 +235,18 @@ class InvalidXmlError(DatabaseError):
 
     def __init__(self, message: str = "Invalid KDBX XML structure") -> None:
         super().__init__(message)
+
+
+class Kdbx3UpgradeRequired(DatabaseError):
+    """KDBX3 database requires explicit upgrade confirmation.
+
+    When saving a KDBX3 database to its original file, explicit
+    confirmation is required since the save will upgrade it to KDBX4.
+    Use save(allow_upgrade=True) to confirm the upgrade.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Saving a KDBX3 database will upgrade it to KDBX4 format. "
+            "Use save(allow_upgrade=True) to confirm, or save to a different file."
+        )

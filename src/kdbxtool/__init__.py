@@ -39,6 +39,7 @@ from .exceptions import (
     InvalidPasswordError,
     InvalidSignatureError,
     InvalidXmlError,
+    Kdbx3UpgradeRequired,
     KdbxError,
     KdfError,
     MissingCredentialsError,
@@ -79,4 +80,5 @@ __all__ = [
     "EntryNotFoundError",
     "GroupNotFoundError",
     "InvalidXmlError",
+    "Kdbx3UpgradeRequired",
 ]

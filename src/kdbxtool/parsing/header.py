@@ -340,8 +340,15 @@ class KdbxHeader:
         # Stream start bytes (for verification)
         stream_start = fields.get(HeaderFieldType.STREAM_START_BYTES)
 
-        # Protected stream key
+        # Protected stream key (in outer header for KDBX3)
         protected_key = fields.get(HeaderFieldType.PROTECTED_STREAM_KEY)
+
+        # Protected stream ID (in outer header for KDBX3)
+        stream_id = None
+        if HeaderFieldType.INNER_RANDOM_STREAM_ID in fields:
+            stream_id = struct.unpack(
+                "<I", fields[HeaderFieldType.INNER_RANDOM_STREAM_ID]
+            )[0]
 
         return (
             cls(
@@ -355,6 +362,7 @@ class KdbxHeader:
                 aes_kdf_rounds=aes_kdf_rounds,
                 stream_start_bytes=stream_start,
                 protected_stream_key=protected_key,
+                inner_random_stream_id=stream_id,
                 raw_header=raw_header,
             ),
             offset,

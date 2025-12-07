@@ -62,6 +62,20 @@ class Group:
         return self._is_root
 
     @property
+    def index(self) -> int:
+        """Get the index of this group within its parent group.
+
+        Returns:
+            Zero-based index of this group in the parent's subgroups list.
+
+        Raises:
+            ValueError: If group has no parent (is root group).
+        """
+        if self._parent is None:
+            raise ValueError("Group has no parent (is root group)")
+        return self._parent.subgroups.index(self)
+
+    @property
     def path(self) -> list[str]:
         """Get path from root to this group.
 
@@ -87,6 +101,39 @@ class Group:
     def touch(self, modify: bool = False) -> None:
         """Update access time, optionally modification time."""
         self.times.touch(modify=modify)
+
+    def reindex(self, new_index: int) -> None:
+        """Move this group to a new position within its parent group.
+
+        Args:
+            new_index: Target position (zero-based). Negative indices are
+                supported (e.g., -1 for last position).
+
+        Raises:
+            ValueError: If group has no parent (is root group).
+            IndexError: If new_index is out of range.
+        """
+        if self._parent is None:
+            raise ValueError("Group has no parent (is root group)")
+
+        subgroups = self._parent.subgroups
+        current_index = subgroups.index(self)
+
+        # Handle negative indices
+        if new_index < 0:
+            new_index = len(subgroups) + new_index
+
+        # Validate bounds
+        if new_index < 0 or new_index >= len(subgroups):
+            raise IndexError(f"Index {new_index} out of range for {len(subgroups)} groups")
+
+        # No-op if already at target position
+        if current_index == new_index:
+            return
+
+        # Remove from current position and insert at new position
+        subgroups.pop(current_index)
+        subgroups.insert(new_index, self)
 
     # --- Entry management ---
 

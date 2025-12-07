@@ -47,11 +47,12 @@ from .exceptions import (
     UnknownCipherError,
     UnsupportedVersionError,
 )
-from .models import Entry, Group, HistoryEntry, Times
+from .models import Attachment, Entry, Group, HistoryEntry, Times
 from .security import Cipher, KdfType
 
 __all__ = [
     # Core classes
+    "Attachment",
     "Database",
     "DatabaseSettings",
     "Entry",

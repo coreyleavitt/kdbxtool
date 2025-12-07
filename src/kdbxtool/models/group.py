@@ -368,19 +368,25 @@ class Group:
 
     # --- Iteration and search ---
 
-    def iter_entries(self, recursive: bool = True) -> Iterator[Entry]:
+    def iter_entries(
+        self, recursive: bool = True, history: bool = False
+    ) -> Iterator[Entry]:
         """Iterate over entries in this group.
 
         Args:
             recursive: If True, include entries from all subgroups
+            history: If True, include history entries
 
         Yields:
             Entry objects
         """
-        yield from self.entries
+        for entry in self.entries:
+            yield entry
+            if history:
+                yield from entry.history
         if recursive:
             for subgroup in self.subgroups:
-                yield from subgroup.iter_entries(recursive=True)
+                yield from subgroup.iter_entries(recursive=True, history=history)
 
     def iter_groups(self, recursive: bool = True) -> Iterator[Group]:
         """Iterate over subgroups.
@@ -436,9 +442,17 @@ class Group:
         self,
         title: str | None = None,
         username: str | None = None,
+        password: str | None = None,
         url: str | None = None,
+        notes: str | None = None,
+        otp: str | None = None,
         tags: list[str] | None = None,
+        string: dict[str, str] | None = None,
+        autotype_enabled: bool | None = None,
+        autotype_sequence: str | None = None,
+        autotype_window: str | None = None,
         recursive: bool = True,
+        history: bool = False,
     ) -> list[Entry]:
         """Find entries matching criteria.
 
@@ -447,22 +461,47 @@ class Group:
         Args:
             title: Match entries with this title (exact)
             username: Match entries with this username (exact)
+            password: Match entries with this password (exact)
             url: Match entries with this URL (exact)
+            notes: Match entries with these notes (exact)
+            otp: Match entries with this OTP (exact)
             tags: Match entries containing all these tags
+            string: Match entries with custom properties (dict of key:value)
+            autotype_enabled: Filter by AutoType enabled state
+            autotype_sequence: Match entries with this AutoType sequence (exact)
+            autotype_window: Match entries with this AutoType window (exact)
             recursive: Search in subgroups
+            history: Include history entries in search
 
         Returns:
             List of matching entries
         """
-        results = []
-        for entry in self.iter_entries(recursive=recursive):
+        results: list[Entry] = []
+        for entry in self.iter_entries(recursive=recursive, history=history):
             if title is not None and entry.title != title:
                 continue
             if username is not None and entry.username != username:
                 continue
+            if password is not None and entry.password != password:
+                continue
             if url is not None and entry.url != url:
                 continue
+            if notes is not None and entry.notes != notes:
+                continue
+            if otp is not None and entry.otp != otp:
+                continue
             if tags is not None and not all(t in entry.tags for t in tags):
+                continue
+            if string is not None:
+                if not all(
+                    entry.get_custom_property(k) == v for k, v in string.items()
+                ):
+                    continue
+            if autotype_enabled is not None and entry.autotype.enabled != autotype_enabled:
+                continue
+            if autotype_sequence is not None and entry.autotype.sequence != autotype_sequence:
+                continue
+            if autotype_window is not None and entry.autotype.window != autotype_window:
                 continue
             results.append(entry)
         return results
@@ -471,10 +510,13 @@ class Group:
         self,
         title: str | None = None,
         username: str | None = None,
+        password: str | None = None,
         url: str | None = None,
         notes: str | None = None,
+        otp: str | None = None,
         recursive: bool = True,
         case_sensitive: bool = False,
+        history: bool = False,
     ) -> list[Entry]:
         """Find entries where fields contain the given substrings.
 
@@ -483,10 +525,13 @@ class Group:
         Args:
             title: Match entries whose title contains this substring
             username: Match entries whose username contains this substring
+            password: Match entries whose password contains this substring
             url: Match entries whose URL contains this substring
             notes: Match entries whose notes contain this substring
+            otp: Match entries whose OTP contains this substring
             recursive: Search in subgroups
             case_sensitive: If False (default), matching is case-insensitive
+            history: Include history entries in search
 
         Returns:
             List of matching entries
@@ -499,15 +544,19 @@ class Group:
                 return search in field_value
             return search.lower() in field_value.lower()
 
-        results = []
-        for entry in self.iter_entries(recursive=recursive):
+        results: list[Entry] = []
+        for entry in self.iter_entries(recursive=recursive, history=history):
             if title is not None and not contains(entry.title, title):
                 continue
             if username is not None and not contains(entry.username, username):
                 continue
+            if password is not None and not contains(entry.password, password):
+                continue
             if url is not None and not contains(entry.url, url):
                 continue
             if notes is not None and not contains(entry.notes, notes):
+                continue
+            if otp is not None and not contains(entry.otp, otp):
                 continue
             results.append(entry)
         return results
@@ -516,10 +565,13 @@ class Group:
         self,
         title: str | None = None,
         username: str | None = None,
+        password: str | None = None,
         url: str | None = None,
         notes: str | None = None,
+        otp: str | None = None,
         recursive: bool = True,
         case_sensitive: bool = False,
+        history: bool = False,
     ) -> list[Entry]:
         """Find entries where fields match the given regex patterns.
 
@@ -528,10 +580,13 @@ class Group:
         Args:
             title: Regex pattern to match against title
             username: Regex pattern to match against username
+            password: Regex pattern to match against password
             url: Regex pattern to match against URL
             notes: Regex pattern to match against notes
+            otp: Regex pattern to match against OTP
             recursive: Search in subgroups
             case_sensitive: If False (default), matching is case-insensitive
+            history: Include history entries in search
 
         Returns:
             List of matching entries
@@ -546,25 +601,33 @@ class Group:
             patterns["title"] = re.compile(title, flags)
         if username is not None:
             patterns["username"] = re.compile(username, flags)
+        if password is not None:
+            patterns["password"] = re.compile(password, flags)
         if url is not None:
             patterns["url"] = re.compile(url, flags)
         if notes is not None:
             patterns["notes"] = re.compile(notes, flags)
+        if otp is not None:
+            patterns["otp"] = re.compile(otp, flags)
 
         def matches(field_value: str | None, pattern: re.Pattern[str]) -> bool:
             if field_value is None:
                 return False
             return pattern.search(field_value) is not None
 
-        results = []
-        for entry in self.iter_entries(recursive=recursive):
+        results: list[Entry] = []
+        for entry in self.iter_entries(recursive=recursive, history=history):
             if "title" in patterns and not matches(entry.title, patterns["title"]):
                 continue
             if "username" in patterns and not matches(entry.username, patterns["username"]):
                 continue
+            if "password" in patterns and not matches(entry.password, patterns["password"]):
+                continue
             if "url" in patterns and not matches(entry.url, patterns["url"]):
                 continue
             if "notes" in patterns and not matches(entry.notes, patterns["notes"]):
+                continue
+            if "otp" in patterns and not matches(entry.otp, patterns["otp"]):
                 continue
             results.append(entry)
         return results

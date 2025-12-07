@@ -28,12 +28,14 @@ from defusedxml import ElementTree as DefusedET
 from .exceptions import (
     DatabaseError,
     InvalidXmlError,
+    Kdbx3UpgradeRequired,
     MissingCredentialsError,
     UnknownCipherError,
 )
 from .models import Entry, Group, HistoryEntry, Times
 from .models.entry import AutoType, BinaryRef, StringField
 from .parsing import CompressionType, KdbxHeader, KdbxVersion
+from .parsing.kdbx3 import read_kdbx3
 from .parsing.kdbx4 import InnerHeader, read_kdbx4, write_kdbx4
 from .security import Cipher, KdfType
 
@@ -294,6 +296,9 @@ class Database:
     ) -> Database:
         """Open a KDBX database from bytes.
 
+        Supports both KDBX3 and KDBX4 formats. KDBX3 databases are opened
+        read-only and will be automatically upgraded to KDBX4 on save.
+
         Args:
             data: KDBX file contents
             password: Database password
@@ -303,8 +308,24 @@ class Database:
         Returns:
             Database instance
         """
-        # Decrypt the file
-        payload = read_kdbx4(data, password=password, keyfile_data=keyfile_data)
+        # Detect version from header (parse just enough to get version)
+        header, _ = KdbxHeader.parse(data)
+
+        # Decrypt the file using appropriate reader
+        is_kdbx3 = header.version == KdbxVersion.KDBX3
+        if is_kdbx3:
+            import warnings
+
+            warnings.warn(
+                "Opening KDBX3 database. Saving will automatically upgrade to KDBX4 "
+                "with modern security settings (Argon2id, ChaCha20). "
+                "Use save(allow_upgrade=True) to confirm.",
+                UserWarning,
+                stacklevel=3,
+            )
+            payload = read_kdbx3(data, password=password, keyfile_data=keyfile_data)
+        else:
+            payload = read_kdbx4(data, password=password, keyfile_data=keyfile_data)
 
         # Parse XML into models (with protected value decryption)
         root_group, settings, binaries = cls._parse_xml(
@@ -321,6 +342,7 @@ class Database:
         db._password = password
         db._keyfile_data = keyfile_data
         db._filepath = filepath
+        db._opened_as_kdbx3 = is_kdbx3
 
         return db
 
@@ -408,28 +430,76 @@ class Database:
 
     # --- Saving databases ---
 
-    def save(self, filepath: str | Path | None = None) -> None:
+    def _upgrade_to_kdbx4(self) -> None:
+        """Upgrade KDBX3 database to KDBX4 format.
+
+        This converts:
+        - AES-KDF to Argon2id (with secure default parameters)
+        - Salsa20 protected stream to ChaCha20
+        - Generates new cryptographic material (seeds, IVs)
+        """
+        if self._header is None:
+            return
+
+        # Create new KDBX4 header with secure defaults
+        self._header = KdbxHeader(
+            version=KdbxVersion.KDBX4,
+            cipher=self._header.cipher,  # Preserve cipher (AES, ChaCha20, or Twofish)
+            compression=self._header.compression,
+            master_seed=os.urandom(32),
+            encryption_iv=os.urandom(self._header.cipher.iv_size),
+            kdf_type=KdfType.ARGON2ID,
+            kdf_salt=os.urandom(32),
+            argon2_memory_kib=64 * 1024,  # 64 MiB
+            argon2_iterations=3,
+            argon2_parallelism=4,
+        )
+
+        # Upgrade inner header to use ChaCha20 (more secure than Salsa20)
+        if self._inner_header is not None:
+            self._inner_header.random_stream_id = PROTECTED_STREAM_CHACHA20
+            self._inner_header.random_stream_key = os.urandom(64)
+
+    def save(
+        self, filepath: str | Path | None = None, *, allow_upgrade: bool = False
+    ) -> None:
         """Save the database to a file.
+
+        KDBX3 databases are automatically upgraded to KDBX4 on save. When saving
+        a KDBX3 database to its original file, explicit confirmation is required
+        via the allow_upgrade parameter.
 
         Args:
             filepath: Path to save to (uses original path if not specified)
+            allow_upgrade: Must be True to confirm KDBX3 to KDBX4 upgrade when
+                saving to the original file. Not required when saving to a new file.
 
         Raises:
-            ValueError: If no filepath specified and database wasn't opened from file
+            DatabaseError: If no filepath specified and database wasn't opened from file
+            Kdbx3UpgradeRequired: If saving KDBX3 to original file without allow_upgrade=True
         """
+        save_to_new_file = filepath is not None
         if filepath:
             self._filepath = Path(filepath)
         elif self._filepath is None:
             raise DatabaseError("No filepath specified and database wasn't opened from file")
 
+        # Require explicit confirmation when saving KDBX3 to original file
+        was_kdbx3 = getattr(self, "_opened_as_kdbx3", False)
+        if was_kdbx3 and not save_to_new_file and not allow_upgrade:
+            raise Kdbx3UpgradeRequired()
+
         data = self.to_bytes()
         self._filepath.write_bytes(data)
 
     def to_bytes(self) -> bytes:
-        """Serialize the database to KDBX format.
+        """Serialize the database to KDBX4 format.
+
+        KDBX3 databases are automatically upgraded to KDBX4 on save.
+        This includes converting AES-KDF to Argon2 and Salsa20 to ChaCha20.
 
         Returns:
-            KDBX file contents as bytes
+            KDBX4 file contents as bytes
 
         Raises:
             ValueError: If no credentials are set
@@ -442,6 +512,10 @@ class Database:
 
         if self._inner_header is None:
             raise DatabaseError("No inner header - database not properly initialized")
+
+        # Auto-upgrade KDBX3 to KDBX4
+        if self._header.version == KdbxVersion.KDBX3:
+            self._upgrade_to_kdbx4()
 
         # Regenerate protected stream key to avoid keystream reuse across saves.
         # This prevents theoretical attacks where an attacker compares multiple

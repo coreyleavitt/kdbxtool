@@ -18,6 +18,7 @@ from .header import (
     KdbxHeader,
     KdbxVersion,
 )
+from .kdbx3 import Kdbx3Reader, read_kdbx3
 from .kdbx4 import (
     DecryptedPayload,
     InnerHeader,
@@ -39,6 +40,9 @@ __all__ = [
     "InnerHeaderFieldType",
     "KdbxHeader",
     "KdbxVersion",
+    # KDBX3
+    "Kdbx3Reader",
+    "read_kdbx3",
     # KDBX4
     "DecryptedPayload",
     "InnerHeader",

@@ -201,6 +201,65 @@ class Group:
         group = Group(name=name, notes=notes, icon_id=icon_id)
         return self.add_subgroup(group)
 
+    def move_to(self, destination: Group) -> None:
+        """Move this group to a different parent group.
+
+        Removes the group from its current parent and adds it to the
+        destination group. Updates the location_changed timestamp.
+
+        Args:
+            destination: Target parent group to move this group to
+
+        Raises:
+            ValueError: If this is the root group (cannot be moved)
+            ValueError: If group has no parent (not yet added to a database)
+            ValueError: If destination is the current parent
+            ValueError: If destination is this group (cannot move into self)
+            ValueError: If destination is a descendant of this group (would create cycle)
+        """
+        if self._is_root:
+            raise ValueError("Cannot move the root group")
+        if self._parent is None:
+            raise ValueError("Cannot move group that has no parent")
+        if self._parent is destination:
+            raise ValueError("Group is already in the destination group")
+        if destination is self:
+            raise ValueError("Cannot move group into itself")
+
+        # Check for cycle: destination cannot be a descendant of this group
+        if self._is_descendant(destination):
+            raise ValueError("Cannot move group into its own descendant (would create cycle)")
+
+        # Remove from current parent
+        self._parent.subgroups.remove(self)
+        old_parent = self._parent
+        self._parent = None
+
+        # Add to new parent
+        destination.subgroups.append(self)
+        self._parent = destination
+
+        # Update timestamps
+        self.times.update_location()
+        old_parent.touch(modify=True)
+        destination.touch(modify=True)
+
+    def _is_descendant(self, group: Group) -> bool:
+        """Check if the given group is a descendant of this group.
+
+        Args:
+            group: Group to check
+
+        Returns:
+            True if group is a descendant of this group
+        """
+        for subgroup in self.subgroups:
+            if subgroup is group:
+                return True
+            if subgroup._is_descendant(group):
+                return True
+        return False
+
     # --- Iteration and search ---
 
     def iter_entries(self, recursive: bool = True) -> Iterator[Entry]:

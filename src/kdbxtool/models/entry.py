@@ -266,6 +266,38 @@ class Entry:
         history_entry = HistoryEntry.from_entry(self)
         self.history.append(history_entry)
 
+    def move_to(self, destination: Group) -> None:
+        """Move this entry to a different group.
+
+        Removes the entry from its current parent and adds it to the
+        destination group. Updates the location_changed timestamp.
+
+        Args:
+            destination: Target group to move the entry to
+
+        Raises:
+            ValueError: If entry has no parent (not yet added to a group)
+            ValueError: If destination is the current parent (no-op would be confusing)
+        """
+        if self._parent is None:
+            raise ValueError("Cannot move entry that has no parent group")
+        if self._parent is destination:
+            raise ValueError("Entry is already in the destination group")
+
+        # Remove from current parent
+        self._parent.entries.remove(self)
+        old_parent = self._parent
+        self._parent = None
+
+        # Add to new parent
+        destination.entries.append(self)
+        self._parent = destination
+
+        # Update timestamps
+        self.times.update_location()
+        old_parent.touch(modify=True)
+        destination.touch(modify=True)
+
     def __str__(self) -> str:
         return f'Entry: "{self.title}" ({self.username})'
 

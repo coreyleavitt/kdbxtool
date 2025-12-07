@@ -715,6 +715,72 @@ class Database:
         """
         yield from self._root_group.iter_groups(recursive=recursive)
 
+    # --- Move operations ---
+
+    def move_entry(self, entry: Entry, destination: Group) -> None:
+        """Move an entry to a different group.
+
+        This is a convenience method that calls entry.move_to(). It validates
+        that both the entry and destination belong to this database.
+
+        Args:
+            entry: Entry to move
+            destination: Target group to move the entry to
+
+        Raises:
+            ValueError: If entry or destination is not in this database
+            ValueError: If entry has no parent
+            ValueError: If destination is the current parent
+        """
+        # Validate entry is in this database
+        if entry.parent is None:
+            raise ValueError("Entry has no parent group")
+        found = self._root_group.find_entry_by_uuid(entry.uuid)
+        if found is None:
+            raise ValueError("Entry is not in this database")
+
+        # Validate destination is in this database
+        if destination is not self._root_group:
+            found_group = self._root_group.find_group_by_uuid(destination.uuid)
+            if found_group is None:
+                raise ValueError("Destination group is not in this database")
+
+        entry.move_to(destination)
+
+    def move_group(self, group: Group, destination: Group) -> None:
+        """Move a group to a different parent group.
+
+        This is a convenience method that calls group.move_to(). It validates
+        that both the group and destination belong to this database.
+
+        Args:
+            group: Group to move
+            destination: Target parent group to move the group to
+
+        Raises:
+            ValueError: If group or destination is not in this database
+            ValueError: If group is the root group
+            ValueError: If group has no parent
+            ValueError: If destination is the current parent
+            ValueError: If destination is the group itself or a descendant
+        """
+        # Validate group is in this database (and not root)
+        if group.is_root_group:
+            raise ValueError("Cannot move the root group")
+        if group.parent is None:
+            raise ValueError("Group has no parent")
+        found = self._root_group.find_group_by_uuid(group.uuid)
+        if found is None:
+            raise ValueError("Group is not in this database")
+
+        # Validate destination is in this database
+        if destination is not self._root_group:
+            found_dest = self._root_group.find_group_by_uuid(destination.uuid)
+            if found_dest is None:
+                raise ValueError("Destination group is not in this database")
+
+        group.move_to(destination)
+
     # --- Memory protection ---
 
     def apply_protection_policy(self, entry: Entry) -> None:

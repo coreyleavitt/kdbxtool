@@ -67,6 +67,11 @@ class Times:
         self.usage_count += 1
         self.touch()
 
+    def update_location(self) -> None:
+        """Update location_changed timestamp when element is moved."""
+        self.location_changed = _now()
+        self.touch(modify=True)
+
     @classmethod
     def create_new(
         cls,

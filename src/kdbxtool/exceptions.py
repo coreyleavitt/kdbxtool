@@ -12,7 +12,9 @@ Exception Hierarchy:
     ├── CryptoError
     │   ├── DecryptionError
     │   ├── AuthenticationError
-    │   └── KdfError
+    │   ├── KdfError
+    │   ├── UnknownCipherError
+    │   └── TwofishNotAvailableError
     ├── CredentialError
     │   ├── InvalidPasswordError
     │   └── InvalidKeyFileError
@@ -129,6 +131,20 @@ class UnknownCipherError(CryptoError):
     def __init__(self, cipher_uuid: bytes) -> None:
         self.cipher_uuid = cipher_uuid
         super().__init__(f"Unknown cipher: {cipher_uuid.hex()}")
+
+
+class TwofishNotAvailableError(CryptoError):
+    """Twofish cipher requested but oxifish package not installed.
+
+    The database uses Twofish encryption, which requires the optional
+    oxifish package. Install it with: pip install kdbxtool[twofish]
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Twofish cipher requires the oxifish package. "
+            "Install with: pip install kdbxtool[twofish]"
+        )
 
 
 # --- Credential Errors ---

@@ -42,6 +42,7 @@ from .exceptions import (
     KdbxError,
     KdfError,
     MissingCredentialsError,
+    TwofishNotAvailableError,
     UnknownCipherError,
     UnsupportedVersionError,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "DecryptionError",
     "AuthenticationError",
     "KdfError",
+    "TwofishNotAvailableError",
     "UnknownCipherError",
     "CredentialError",
     "InvalidPasswordError",

@@ -17,7 +17,15 @@ from typing import TYPE_CHECKING
 
 from Cryptodome.Cipher import AES, ChaCha20
 
-from kdbxtool.exceptions import UnknownCipherError
+from kdbxtool.exceptions import TwofishNotAvailableError, UnknownCipherError
+
+# Optional Twofish support via oxifish
+try:
+    from oxifish import TwofishCBC, pad, unpad, PaddingStyle
+
+    TWOFISH_AVAILABLE = True
+except ImportError:
+    TWOFISH_AVAILABLE = False
 
 if TYPE_CHECKING:
     pass
@@ -26,9 +34,10 @@ if TYPE_CHECKING:
 class Cipher(Enum):
     """Supported ciphers for KDBX encryption.
 
-    KDBX4 supports two ciphers:
+    KDBX supports three ciphers:
     - AES-256-CBC: Traditional cipher, widely supported
     - ChaCha20: Modern stream cipher, faster in software
+    - Twofish-256-CBC: Legacy cipher, requires oxifish package
 
     Note: KDBX uses plain ChaCha20, not ChaCha20-Poly1305.
     Authentication is provided by the HMAC block stream.
@@ -38,6 +47,7 @@ class Cipher(Enum):
 
     AES256_CBC = bytes.fromhex("31c1f2e6bf714350be5805216afc5aff")
     CHACHA20 = bytes.fromhex("d6038a2b8b6f4cb5a524339a31dbb59a")
+    TWOFISH256_CBC = bytes.fromhex("ad68f29f576f4bb9a36ad47af965346c")
 
     @property
     def key_size(self) -> int:
@@ -49,6 +59,8 @@ class Cipher(Enum):
         """Return the IV/nonce size in bytes for this cipher."""
         if self == Cipher.AES256_CBC:
             return 16  # AES block size
+        if self == Cipher.TWOFISH256_CBC:
+            return 16  # Twofish block size
         return 12  # ChaCha20 nonce
 
     @property
@@ -56,6 +68,8 @@ class Cipher(Enum):
         """Human-readable cipher name."""
         if self == Cipher.AES256_CBC:
             return "AES-256-CBC"
+        if self == Cipher.TWOFISH256_CBC:
+            return "Twofish-256-CBC"
         return "ChaCha20"
 
     @classmethod
@@ -152,7 +166,11 @@ class CipherContext:
 
         Raises:
             ValueError: If key or IV size is incorrect
+            TwofishNotAvailableError: If Twofish requested but oxifish not installed
         """
+        if cipher == Cipher.TWOFISH256_CBC and not TWOFISH_AVAILABLE:
+            raise TwofishNotAvailableError()
+
         if len(key) != cipher.key_size:
             raise ValueError(
                 f"{cipher.display_name} requires {cipher.key_size}-byte key, "
@@ -171,7 +189,7 @@ class CipherContext:
     def encrypt(self, plaintext: bytes) -> bytes:
         """Encrypt plaintext data.
 
-        For AES-CBC, data must be padded to block size.
+        For AES-CBC and Twofish-CBC, data must be padded to block size.
         For ChaCha20, returns stream-encrypted ciphertext (same length as input).
 
         Args:
@@ -183,6 +201,9 @@ class CipherContext:
         if self._cipher == Cipher.AES256_CBC:
             aes_cipher = AES.new(self._key, AES.MODE_CBC, iv=self._iv)
             return aes_cipher.encrypt(plaintext)
+        elif self._cipher == Cipher.TWOFISH256_CBC:
+            twofish_cipher = TwofishCBC(self._key)
+            return twofish_cipher.encrypt(plaintext, self._iv)
         else:
             chacha_cipher = ChaCha20.new(key=self._key, nonce=self._iv)
             return chacha_cipher.encrypt(plaintext)
@@ -190,7 +211,7 @@ class CipherContext:
     def decrypt(self, ciphertext: bytes) -> bytes:
         """Decrypt ciphertext data.
 
-        For AES-CBC, returns decrypted data (caller must remove padding).
+        For AES-CBC and Twofish-CBC, returns decrypted data (caller must remove padding).
         For ChaCha20, returns stream-decrypted plaintext.
 
         Args:
@@ -202,6 +223,9 @@ class CipherContext:
         if self._cipher == Cipher.AES256_CBC:
             aes_cipher = AES.new(self._key, AES.MODE_CBC, iv=self._iv)
             return aes_cipher.decrypt(ciphertext)
+        elif self._cipher == Cipher.TWOFISH256_CBC:
+            twofish_cipher = TwofishCBC(self._key)
+            return twofish_cipher.decrypt(ciphertext, self._iv)
         else:
             chacha_cipher = ChaCha20.new(key=self._key, nonce=self._iv)
             return chacha_cipher.decrypt(ciphertext)

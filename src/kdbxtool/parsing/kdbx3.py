@@ -23,8 +23,6 @@ from __future__ import annotations
 
 import gzip
 import hashlib
-import struct
-from dataclasses import dataclass
 
 from kdbxtool.exceptions import (
     AuthenticationError,
@@ -172,53 +170,43 @@ class Kdbx3Reader:
         Blocks continue until block data length is 0.
         """
         result = bytearray()
-        offset = 0
+        ctx = ParseContext(data)
         expected_index = 0
 
-        while offset < len(data):
-            # Read block index (4 bytes)
-            if offset + 4 > len(data):
-                raise CorruptedDataError("Truncated block index")
-            block_index = struct.unpack("<I", data[offset : offset + 4])[0]
-            offset += 4
+        with ctx.scope("hashed_blocks"):
+            while not ctx.exhausted:
+                with ctx.scope(f"block[{expected_index}]"):
+                    # Read block index
+                    block_index = ctx.read_u32("index")
 
-            if block_index != expected_index:
-                raise CorruptedDataError(
-                    f"Block index mismatch: expected {expected_index}, got {block_index}"
-                )
+                    if block_index != expected_index:
+                        raise CorruptedDataError(
+                            f"Block index mismatch: expected {expected_index}, got {block_index}"
+                        )
 
-            # Read block hash (32 bytes)
-            if offset + 32 > len(data):
-                raise CorruptedDataError("Truncated block hash")
-            block_hash = data[offset : offset + 32]
-            offset += 32
+                    # Read block hash
+                    block_hash = ctx.read(32, "hash")
 
-            # Read block data length (4 bytes)
-            if offset + 4 > len(data):
-                raise CorruptedDataError("Truncated block length")
-            block_len = struct.unpack("<I", data[offset : offset + 4])[0]
-            offset += 4
+                    # Read block data length
+                    block_len = ctx.read_u32("length")
 
-            # Check for end block
-            if block_len == 0:
-                # Verify empty block has zero hash
-                if block_hash != b"\x00" * 32:
-                    raise CorruptedDataError("Invalid end block hash")
-                break
+                    # Check for end block
+                    if block_len == 0:
+                        # Verify empty block has zero hash
+                        if block_hash != b"\x00" * 32:
+                            raise CorruptedDataError("Invalid end block hash")
+                        break
 
-            # Read block data
-            if offset + block_len > len(data):
-                raise CorruptedDataError("Truncated block data")
-            block_data = data[offset : offset + block_len]
-            offset += block_len
+                    # Read block data
+                    block_data = ctx.read(block_len, "data")
 
-            # Verify block hash
-            computed_hash = hashlib.sha256(block_data).digest()
-            if not constant_time_compare(computed_hash, block_hash):
-                raise CorruptedDataError(f"Block {block_index} hash mismatch")
+                    # Verify block hash
+                    computed_hash = hashlib.sha256(block_data).digest()
+                    if not constant_time_compare(computed_hash, block_hash):
+                        raise CorruptedDataError(f"Block {block_index} hash mismatch")
 
-            result.extend(block_data)
-            expected_index += 1
+                    result.extend(block_data)
+                    expected_index += 1
 
         return bytes(result)
 

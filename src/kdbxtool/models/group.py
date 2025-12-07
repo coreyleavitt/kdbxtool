@@ -6,9 +6,13 @@ import re
 import uuid as uuid_module
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .entry import Entry
 from .times import Times
+
+if TYPE_CHECKING:
+    from ..database import Database
 
 
 @dataclass
@@ -23,7 +27,8 @@ class Group:
         name: Display name of the group
         notes: Optional notes/description
         times: Timestamps (creation, modification, access, expiry)
-        icon_id: Icon ID for display
+        icon_id: Icon ID for display (standard icon)
+        custom_icon_uuid: UUID of custom icon (overrides icon_id if set)
         is_expanded: Whether group is expanded in UI
         default_autotype_sequence: Default AutoType sequence for entries
         enable_autotype: Whether AutoType is enabled for this group
@@ -38,6 +43,7 @@ class Group:
     notes: str | None = None
     times: Times = field(default_factory=Times.create_new)
     icon_id: str = "48"  # Default folder icon
+    custom_icon_uuid: uuid_module.UUID | None = None
     is_expanded: bool = True
     default_autotype_sequence: str | None = None
     enable_autotype: bool | None = None  # None = inherit from parent
@@ -50,11 +56,18 @@ class Group:
     _parent: Group | None = field(default=None, repr=False, compare=False)
     # Flag for root group
     _is_root: bool = field(default=False, repr=False)
+    # Runtime reference to database (not serialized) - used for icon name resolution
+    _database: Database | None = field(default=None, repr=False, compare=False)
 
     @property
     def parent(self) -> Group | None:
         """Get parent group, or None if this is the root."""
         return self._parent
+
+    @property
+    def database(self) -> Database | None:
+        """Get the database this group belongs to."""
+        return self._database
 
     @property
     def is_root_group(self) -> bool:
@@ -97,6 +110,41 @@ class Group:
     def expired(self) -> bool:
         """Check if group has expired."""
         return self.times.expired
+
+    @property
+    def custom_icon(self) -> uuid_module.UUID | None:
+        """Get or set custom icon by UUID or name.
+
+        When setting, accepts either a UUID or an icon name (string).
+        If a string is provided, it must match exactly one icon name in the
+        database. Requires the group to be associated with a database for
+        name-based lookup.
+
+        Returns:
+            UUID of the custom icon, or None if not set
+        """
+        return self.custom_icon_uuid
+
+    @custom_icon.setter
+    def custom_icon(self, value: uuid_module.UUID | str | None) -> None:
+        if value is None:
+            self.custom_icon_uuid = None
+        elif isinstance(value, uuid_module.UUID):
+            self.custom_icon_uuid = value
+        elif isinstance(value, str):
+            # Look up icon by name
+            if self._database is None:
+                raise ValueError(
+                    "Cannot set custom icon by name: group is not associated with a database"
+                )
+            icon_uuid = self._database.find_custom_icon_by_name(value)
+            if icon_uuid is None:
+                raise ValueError(f"No custom icon found with name: {value}")
+            self.custom_icon_uuid = icon_uuid
+        else:
+            raise TypeError(
+                f"custom_icon must be UUID, str, or None, not {type(value).__name__}"
+            )
 
     def touch(self, modify: bool = False) -> None:
         """Update access time, optionally modification time."""
@@ -147,6 +195,7 @@ class Group:
             The added entry
         """
         entry._parent = self
+        entry._database = self._database
         self.entries.append(entry)
         self.touch(modify=True)
         return entry
@@ -210,9 +259,19 @@ class Group:
             The added group
         """
         group._parent = self
+        # Propagate database reference to the subgroup and all its contents
+        self._propagate_database(group)
         self.subgroups.append(group)
         self.touch(modify=True)
         return group
+
+    def _propagate_database(self, group: Group) -> None:
+        """Recursively propagate database reference to a group and its contents."""
+        group._database = self._database
+        for entry in group.entries:
+            entry._database = self._database
+        for subgroup in group.subgroups:
+            self._propagate_database(subgroup)
 
     def remove_subgroup(self, group: Group) -> None:
         """Remove a subgroup from this group.

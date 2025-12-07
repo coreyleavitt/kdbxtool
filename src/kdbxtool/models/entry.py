@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from .times import Times
 
 if TYPE_CHECKING:
+    from ..database import Database
     from .group import Group
 
 
@@ -80,7 +81,8 @@ class Entry:
     Attributes:
         uuid: Unique identifier for the entry
         times: Timestamps (creation, modification, access, expiry)
-        icon_id: Icon ID for display
+        icon_id: Icon ID for display (standard icon)
+        custom_icon_uuid: UUID of custom icon (overrides icon_id if set)
         tags: List of tags for categorization
         strings: Dictionary of string fields (key -> StringField)
         binaries: List of binary attachment references
@@ -95,6 +97,7 @@ class Entry:
     uuid: uuid_module.UUID = field(default_factory=uuid_module.uuid4)
     times: Times = field(default_factory=Times.create_new)
     icon_id: str = "0"
+    custom_icon_uuid: uuid_module.UUID | None = None
     tags: list[str] = field(default_factory=list)
     strings: dict[str, StringField] = field(default_factory=dict)
     binaries: list[BinaryRef] = field(default_factory=list)
@@ -107,6 +110,8 @@ class Entry:
 
     # Runtime reference to parent group (not serialized)
     _parent: Group | None = field(default=None, repr=False, compare=False)
+    # Runtime reference to database (not serialized) - used for icon name resolution
+    _database: Database | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Initialize default string fields if not present."""
@@ -183,6 +188,41 @@ class Entry:
             self.strings["otp"] = StringField("otp", protected=True)
         self.strings["otp"].value = value
 
+    @property
+    def custom_icon(self) -> uuid_module.UUID | None:
+        """Get or set custom icon by UUID or name.
+
+        When setting, accepts either a UUID or an icon name (string).
+        If a string is provided, it must match exactly one icon name in the
+        database. Requires the entry to be associated with a database for
+        name-based lookup.
+
+        Returns:
+            UUID of the custom icon, or None if not set
+        """
+        return self.custom_icon_uuid
+
+    @custom_icon.setter
+    def custom_icon(self, value: uuid_module.UUID | str | None) -> None:
+        if value is None:
+            self.custom_icon_uuid = None
+        elif isinstance(value, uuid_module.UUID):
+            self.custom_icon_uuid = value
+        elif isinstance(value, str):
+            # Look up icon by name
+            if self._database is None:
+                raise ValueError(
+                    "Cannot set custom icon by name: entry is not associated with a database"
+                )
+            icon_uuid = self._database.find_custom_icon_by_name(value)
+            if icon_uuid is None:
+                raise ValueError(f"No custom icon found with name: {value}")
+            self.custom_icon_uuid = icon_uuid
+        else:
+            raise TypeError(
+                f"custom_icon must be UUID, str, or None, not {type(value).__name__}"
+            )
+
     # --- Custom properties ---
 
     def get_custom_property(self, key: str) -> str | None:
@@ -250,6 +290,11 @@ class Entry:
     def parent(self) -> Group | None:
         """Get parent group."""
         return self._parent
+
+    @property
+    def database(self) -> Database | None:
+        """Get the database this entry belongs to."""
+        return self._database
 
     @property
     def index(self) -> int:
@@ -465,6 +510,7 @@ class HistoryEntry(Entry):
             uuid=entry.uuid,
             times=copy.deepcopy(entry.times),
             icon_id=entry.icon_id,
+            custom_icon_uuid=entry.custom_icon_uuid,
             tags=list(entry.tags),
             strings=copy.deepcopy(entry.strings),
             binaries=list(entry.binaries),

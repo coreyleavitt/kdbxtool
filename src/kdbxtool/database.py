@@ -399,7 +399,12 @@ class Database:
                 UserWarning,
                 stacklevel=3,
             )
-            payload = read_kdbx3(data, password=password, keyfile_data=keyfile_data)
+            payload = read_kdbx3(
+                data,
+                password=password,
+                keyfile_data=keyfile_data,
+                transformed_key=transformed_key,
+            )
         else:
             payload = read_kdbx4(
                 data,
@@ -581,6 +586,11 @@ class Database:
         data = self.to_bytes(regenerate_seeds=regenerate_seeds)
         self._filepath.write_bytes(data)
 
+        # After KDBX3 upgrade, reload to get proper KDBX4 state (including transformed_key)
+        if was_kdbx3:
+            self.reload()
+            self._opened_as_kdbx3 = False
+
     def reload(self) -> None:
         """Reload the database from disk using stored credentials.
 
@@ -615,6 +625,7 @@ class Database:
         self._header = reloaded._header
         self._inner_header = reloaded._inner_header
         self._binaries = reloaded._binaries
+        self._transformed_key = reloaded._transformed_key
         self._opened_as_kdbx3 = reloaded._opened_as_kdbx3
 
     def xml(self, *, pretty_print: bool = False) -> bytes:

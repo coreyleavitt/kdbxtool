@@ -160,3 +160,81 @@ class TestTransformedKey:
 
         # After context exit, key should be cleared
         assert db2.transformed_key is None
+
+
+class TestKdbx3TransformedKey:
+    """Tests for transformed_key behavior with KDBX3 databases."""
+
+    def test_kdbx3_transformed_key_available(self) -> None:
+        """Test that transformed_key is available for KDBX3 databases."""
+        import warnings
+        from pathlib import Path
+
+        test_file = Path(__file__).parent / "fixtures" / "test3.kdbx"
+        test_key = Path(__file__).parent / "fixtures" / "test3.key"
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # Ignore KDBX3 upgrade warning
+            db = Database.open(test_file, password="password", keyfile=test_key)
+
+        # KDBX3 now provides transformed_key for caching
+        assert db.transformed_key is not None
+        assert isinstance(db.transformed_key, bytes)
+        assert len(db.transformed_key) == 32  # SHA256 output
+
+    def test_kdbx3_open_with_transformed_key(self) -> None:
+        """Test that KDBX3 can be opened with cached transformed_key."""
+        import warnings
+        from pathlib import Path
+
+        test_file = Path(__file__).parent / "fixtures" / "test3.kdbx"
+        test_key = Path(__file__).parent / "fixtures" / "test3.key"
+
+        # First open to get transformed_key
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            db = Database.open(test_file, password="password", keyfile=test_key)
+            cached_key = db.transformed_key
+
+        # Open again with just the transformed_key (no password/keyfile)
+        data = test_file.read_bytes()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            db2 = Database.open_bytes(data, transformed_key=cached_key)
+
+        # Should be able to access data
+        assert db2.root_group is not None
+
+    def test_kdbx3_transformed_key_changes_after_upgrade(self) -> None:
+        """Test that transformed_key changes after KDBX3 upgrade (AES-KDF to Argon2)."""
+        import tempfile
+        import warnings
+        from pathlib import Path
+
+        test_file = Path(__file__).parent / "fixtures" / "test3.kdbx"
+        test_key = Path(__file__).parent / "fixtures" / "test3.key"
+
+        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
+            temp_path = Path(f.name)
+
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                db = Database.open(test_file, password="password", keyfile=test_key)
+
+            # KDBX3 has transformed_key (AES-KDF derived)
+            kdbx3_key = db.transformed_key
+            assert kdbx3_key is not None
+            assert len(kdbx3_key) == 32
+
+            # Save triggers upgrade and auto-reload
+            db.save(filepath=temp_path, allow_upgrade=True)
+
+            # After upgrade + reload, transformed_key is different (Argon2 derived)
+            kdbx4_key = db.transformed_key
+            assert kdbx4_key is not None
+            assert len(kdbx4_key) == 32
+            # Keys should be different since KDF changed
+            assert kdbx4_key != kdbx3_key
+        finally:
+            temp_path.unlink(missing_ok=True)

@@ -567,6 +567,68 @@ class Database:
         self._binaries = reloaded._binaries
         self._opened_as_kdbx3 = reloaded._opened_as_kdbx3
 
+    def xml(self, *, pretty_print: bool = False) -> bytes:
+        """Export database XML payload.
+
+        Returns the decrypted, decompressed XML payload of the database.
+        Protected values (passwords, etc.) are shown in plaintext.
+        Useful for debugging and migration.
+
+        Args:
+            pretty_print: If True, format XML with indentation for readability
+
+        Returns:
+            XML payload as bytes (UTF-8 encoded)
+        """
+        root = Element("KeePassFile")
+
+        # Meta section
+        meta = SubElement(root, "Meta")
+        self._build_meta(meta)
+
+        # Root section
+        root_elem = SubElement(root, "Root")
+        self._build_group(root_elem, self._root_group)
+
+        # Note: We do NOT encrypt protected values here - the point is to
+        # export the decrypted XML for debugging/inspection
+
+        if pretty_print:
+            self._indent_xml(root)
+
+        return cast(bytes, tostring(root, encoding="utf-8", xml_declaration=True))
+
+    def dump_xml(self, filepath: str | Path, *, pretty_print: bool = True) -> None:
+        """Write database XML payload to a file.
+
+        Writes the decrypted, decompressed XML payload to a file.
+        Protected values (passwords, etc.) are shown in plaintext.
+        Useful for debugging and migration.
+
+        Args:
+            filepath: Path to write the XML file
+            pretty_print: If True (default), format XML with indentation
+        """
+        xml_data = self.xml(pretty_print=pretty_print)
+        Path(filepath).write_bytes(xml_data)
+
+    @staticmethod
+    def _indent_xml(elem: Element, level: int = 0) -> None:
+        """Add indentation to XML element tree for pretty printing."""
+        indent = "\n" + "  " * level
+        if len(elem):
+            if not elem.text or not elem.text.strip():
+                elem.text = indent + "  "
+            if not elem.tail or not elem.tail.strip():
+                elem.tail = indent
+            for child in elem:
+                Database._indent_xml(child, level + 1)
+            if not child.tail or not child.tail.strip():
+                child.tail = indent
+        else:
+            if level and (not elem.tail or not elem.tail.strip()):
+                elem.tail = indent
+
     def to_bytes(self, *, regenerate_seeds: bool = True) -> bytes:
         """Serialize the database to KDBX4 format.
 

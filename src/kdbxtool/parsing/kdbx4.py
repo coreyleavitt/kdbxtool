@@ -44,6 +44,7 @@ from kdbxtool.security import (
 )
 from kdbxtool.security.kdf import AesKdfConfig, KdfType
 
+from .context import BuildContext, ParseContext
 from .header import (
     CompressionType,
     InnerHeaderFieldType,
@@ -96,8 +97,7 @@ class Kdbx4Reader:
         Args:
             data: Complete KDBX4 file contents
         """
-        self._data = data
-        self._offset = 0
+        self._ctx = ParseContext(data)
 
     def decrypt(
         self,
@@ -117,16 +117,17 @@ class Kdbx4Reader:
             ValueError: If decryption fails (wrong credentials, corrupted file)
         """
         # Parse outer header
-        header, header_end = KdbxHeader.parse(self._data)
+        header, header_end = KdbxHeader.parse(self._ctx.data)
 
         if header.version != KdbxVersion.KDBX4:
             raise UnsupportedVersionError(header.version.value, 0)
 
-        self._offset = header_end
+        self._ctx.offset = header_end
 
         # Read header hash and HMAC
-        header_hash = self._read_bytes(32)
-        header_hmac = self._read_bytes(32)
+        with self._ctx.scope("header_verification"):
+            header_hash = self._ctx.read(32, "header_hash")
+            header_hmac = self._ctx.read(32, "header_hmac")
 
         # Verify header hash
         computed_hash = hashlib.sha256(header.raw_header).digest()
@@ -179,14 +180,6 @@ class Kdbx4Reader:
             inner_header=inner_header,
             xml_data=xml_data,
         )
-
-    def _read_bytes(self, n: int) -> bytes:
-        """Read n bytes from current position."""
-        if self._offset + n > len(self._data):
-            raise CorruptedDataError(f"Unexpected end of file at offset {self._offset}")
-        result = self._data[self._offset : self._offset + n]
-        self._offset += n
-        return result
 
     def _derive_master_key(
         self, header: KdbxHeader, composite_key: SecureBytes
@@ -268,37 +261,39 @@ class Kdbx4Reader:
         blocks = []
         block_index = 0
 
-        while True:
-            block_hmac = self._read_bytes(32)
-            block_len = struct.unpack("<I", self._read_bytes(4))[0]
+        with self._ctx.scope("hmac_blocks"):
+            while True:
+                with self._ctx.scope(f"block[{block_index}]"):
+                    block_hmac = self._ctx.read(32, "hmac")
+                    block_len = self._ctx.read_u32("length")
 
-            if block_len == 0:
-                # Verify final block HMAC
-                block_key = self._compute_block_hmac_key(hmac_key, block_index)
-                expected = compute_hmac_sha256(
-                    block_key,
-                    struct.pack("<Q", block_index) + struct.pack("<I", 0),
-                )
-                if not constant_time_compare(expected, block_hmac):
-                    raise AuthenticationError("Block authentication failed")
-                break
+                    if block_len == 0:
+                        # Verify final block HMAC
+                        block_key = self._compute_block_hmac_key(hmac_key, block_index)
+                        expected = compute_hmac_sha256(
+                            block_key,
+                            struct.pack("<Q", block_index) + struct.pack("<I", 0),
+                        )
+                        if not constant_time_compare(expected, block_hmac):
+                            raise AuthenticationError("Block authentication failed")
+                        break
 
-            block_data = self._read_bytes(block_len)
+                    block_data = self._ctx.read(block_len, "data")
 
-            # Verify block HMAC
-            block_key = self._compute_block_hmac_key(hmac_key, block_index)
-            hmac_data = (
-                struct.pack("<Q", block_index)
-                + struct.pack("<I", block_len)
-                + block_data
-            )
-            expected = compute_hmac_sha256(block_key, hmac_data)
+                    # Verify block HMAC
+                    block_key = self._compute_block_hmac_key(hmac_key, block_index)
+                    hmac_data = (
+                        struct.pack("<Q", block_index)
+                        + struct.pack("<I", block_len)
+                        + block_data
+                    )
+                    expected = compute_hmac_sha256(block_key, hmac_data)
 
-            if not constant_time_compare(expected, block_hmac):
-                raise AuthenticationError("Block authentication failed")
+                    if not constant_time_compare(expected, block_hmac):
+                        raise AuthenticationError("Block authentication failed")
 
-            blocks.append(block_data)
-            block_index += 1
+                    blocks.append(block_data)
+                    block_index += 1
 
         return b"".join(blocks)
 
@@ -326,43 +321,35 @@ class Kdbx4Reader:
 
         Returns inner header and offset where XML starts.
         """
-        offset = 0
+        ctx = ParseContext(data)
         random_stream_id = 0
         random_stream_key = b""
         binaries: dict[int, tuple[bool, bytes]] = {}
         binary_index = 0
 
-        while offset < len(data):
-            if offset + 5 > len(data):
-                raise CorruptedDataError("Truncated inner header")
+        with ctx.scope("inner_header"):
+            while not ctx.exhausted:
+                field_type = ctx.read_u8("type")
+                field_len = ctx.read_u32("length")
+                field_data = ctx.read(field_len, "data")
 
-            field_type = data[offset]
-            field_len = struct.unpack_from("<I", data, offset + 1)[0]
-            offset += 5
-
-            if offset + field_len > len(data):
-                raise CorruptedDataError("Truncated inner header field")
-
-            field_data = data[offset : offset + field_len]
-            offset += field_len
-
-            if field_type == InnerHeaderFieldType.END:
-                break
-            elif field_type == InnerHeaderFieldType.INNER_RANDOM_STREAM_ID:
-                random_stream_id = struct.unpack("<I", field_data)[0]
-            elif field_type == InnerHeaderFieldType.INNER_RANDOM_STREAM_KEY:
-                random_stream_key = field_data
-            elif field_type == InnerHeaderFieldType.BINARY:
-                # First byte is protection flag
-                binary_data = field_data[1:]
-                if len(binary_data) > MAX_BINARY_SIZE:
-                    raise CorruptedDataError(
-                        f"Binary attachment too large: {len(binary_data)} bytes "
-                        f"(max {MAX_BINARY_SIZE} bytes)"
-                    )
-                protected = field_data[0] != 0
-                binaries[binary_index] = (protected, binary_data)
-                binary_index += 1
+                if field_type == InnerHeaderFieldType.END:
+                    break
+                elif field_type == InnerHeaderFieldType.INNER_RANDOM_STREAM_ID:
+                    random_stream_id = struct.unpack("<I", field_data)[0]
+                elif field_type == InnerHeaderFieldType.INNER_RANDOM_STREAM_KEY:
+                    random_stream_key = field_data
+                elif field_type == InnerHeaderFieldType.BINARY:
+                    # First byte is protection flag
+                    binary_data = field_data[1:]
+                    if len(binary_data) > MAX_BINARY_SIZE:
+                        raise CorruptedDataError(
+                            f"Binary attachment too large: {len(binary_data)} bytes "
+                            f"(max {MAX_BINARY_SIZE} bytes)"
+                        )
+                    protected = field_data[0] != 0
+                    binaries[binary_index] = (protected, binary_data)
+                    binary_index += 1
 
         return (
             InnerHeader(
@@ -370,7 +357,7 @@ class Kdbx4Reader:
                 random_stream_key=random_stream_key,
                 binaries=binaries,
             ),
-            offset,
+            ctx.offset,
         )
 
 
@@ -487,20 +474,16 @@ class Kdbx4Writer:
 
     def _build_inner_header(self, inner: InnerHeader) -> bytes:
         """Build inner header bytes."""
-        parts = []
-
-        def add_field(field_type: int, data: bytes) -> None:
-            parts.append(struct.pack("<BI", field_type, len(data)))
-            parts.append(data)
+        ctx = BuildContext()
 
         # Random stream ID
-        add_field(
+        ctx.write_tlv(
             InnerHeaderFieldType.INNER_RANDOM_STREAM_ID,
             struct.pack("<I", inner.random_stream_id),
         )
 
         # Random stream key
-        add_field(
+        ctx.write_tlv(
             InnerHeaderFieldType.INNER_RANDOM_STREAM_KEY,
             inner.random_stream_key,
         )
@@ -508,12 +491,12 @@ class Kdbx4Writer:
         # Binary attachments
         for _idx, (protected, data) in sorted(inner.binaries.items()):
             binary_data = bytes([1 if protected else 0]) + data
-            add_field(InnerHeaderFieldType.BINARY, binary_data)
+            ctx.write_tlv(InnerHeaderFieldType.BINARY, binary_data)
 
         # End marker
-        add_field(InnerHeaderFieldType.END, b"")
+        ctx.write_tlv(InnerHeaderFieldType.END, b"")
 
-        return b"".join(parts)
+        return ctx.build()
 
     def _add_pkcs7_padding(self, data: bytes) -> bytes:
         """Add PKCS7 padding to make data a multiple of 16 bytes."""
@@ -525,7 +508,7 @@ class Kdbx4Writer:
         self, data: bytes, hmac_key: bytes
     ) -> bytes:
         """Build HMAC block stream from data."""
-        parts = []
+        ctx = BuildContext()
         block_index = 0
         offset = 0
 
@@ -543,9 +526,9 @@ class Kdbx4Writer:
             )
             block_hmac = compute_hmac_sha256(block_key, hmac_data)
 
-            parts.append(block_hmac)
-            parts.append(struct.pack("<I", block_len))
-            parts.append(block_data)
+            ctx.write(block_hmac)
+            ctx.write_u32(block_len)
+            ctx.write(block_data)
 
             block_index += 1
 
@@ -555,10 +538,10 @@ class Kdbx4Writer:
             block_key,
             struct.pack("<Q", block_index) + struct.pack("<I", 0),
         )
-        parts.append(final_hmac)
-        parts.append(struct.pack("<I", 0))
+        ctx.write(final_hmac)
+        ctx.write_u32(0)
 
-        return b"".join(parts)
+        return ctx.build()
 
 
 def read_kdbx4(

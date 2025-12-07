@@ -5,9 +5,10 @@ This module handles low-level binary format operations:
 - KDBX4 payload encryption/decryption
 - XML payload handling
 
-All parsing uses Python's struct module for binary operations.
+All parsing uses context classes for structured binary operations.
 """
 
+from .context import BuildContext, ParseContext
 from .header import (
     KDBX4_MAGIC,
     KDBX_MAGIC,
@@ -27,6 +28,9 @@ from .kdbx4 import (
 )
 
 __all__ = [
+    # Context
+    "BuildContext",
+    "ParseContext",
     # Header
     "KDBX4_MAGIC",
     "KDBX_MAGIC",

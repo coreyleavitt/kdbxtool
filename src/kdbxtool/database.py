@@ -493,7 +493,11 @@ class Database:
             self._inner_header.random_stream_key = os.urandom(64)
 
     def save(
-        self, filepath: str | Path | None = None, *, allow_upgrade: bool = False
+        self,
+        filepath: str | Path | None = None,
+        *,
+        allow_upgrade: bool = False,
+        regenerate_seeds: bool = True,
     ) -> None:
         """Save the database to a file.
 
@@ -505,6 +509,9 @@ class Database:
             filepath: Path to save to (uses original path if not specified)
             allow_upgrade: Must be True to confirm KDBX3 to KDBX4 upgrade when
                 saving to the original file. Not required when saving to a new file.
+            regenerate_seeds: If True (default), regenerate all cryptographic seeds
+                (master_seed, encryption_iv, kdf_salt, random_stream_key) on save.
+                Set to False only for testing or when using pre-computed transformed keys.
 
         Raises:
             DatabaseError: If no filepath specified and database wasn't opened from file
@@ -521,14 +528,21 @@ class Database:
         if was_kdbx3 and not save_to_new_file and not allow_upgrade:
             raise Kdbx3UpgradeRequired()
 
-        data = self.to_bytes()
+        data = self.to_bytes(regenerate_seeds=regenerate_seeds)
         self._filepath.write_bytes(data)
 
-    def to_bytes(self) -> bytes:
+    def to_bytes(self, *, regenerate_seeds: bool = True) -> bytes:
         """Serialize the database to KDBX4 format.
 
         KDBX3 databases are automatically upgraded to KDBX4 on save.
         This includes converting AES-KDF to Argon2 and Salsa20 to ChaCha20.
+
+        Args:
+            regenerate_seeds: If True (default), regenerate all cryptographic seeds
+                (master_seed, encryption_iv, kdf_salt, random_stream_key) on save.
+                This prevents precomputation attacks where an attacker can derive
+                the encryption key in advance. Set to False only for testing or
+                when using pre-computed transformed keys.
 
         Returns:
             KDBX4 file contents as bytes
@@ -549,10 +563,14 @@ class Database:
         if self._header.version == KdbxVersion.KDBX3:
             self._upgrade_to_kdbx4()
 
-        # Regenerate protected stream key to avoid keystream reuse across saves.
-        # This prevents theoretical attacks where an attacker compares multiple
-        # versions of the encrypted file to XOR plaintexts.
-        self._inner_header.random_stream_key = os.urandom(64)
+        # Regenerate all cryptographic seeds to prevent precomputation attacks.
+        # This ensures each save produces a file encrypted with fresh randomness.
+        # See: https://github.com/libkeepass/pykeepass/issues/219
+        if regenerate_seeds:
+            self._header.master_seed = os.urandom(32)
+            self._header.encryption_iv = os.urandom(self._header.cipher.iv_size)
+            self._header.kdf_salt = os.urandom(32)
+            self._inner_header.random_stream_key = os.urandom(64)
 
         # Sync binaries to inner header (preserve protection flags where possible)
         existing_binaries = self._inner_header.binaries

@@ -48,10 +48,11 @@ from .exceptions import (
     UnsupportedVersionError,
 )
 from .models import Attachment, Entry, Group, HistoryEntry, Times
-from .security import Cipher, KdfType
+from .security import Argon2Config, Cipher, KdfType
 
 __all__ = [
     # Core classes
+    "Argon2Config",
     "Attachment",
     "Database",
     "DatabaseSettings",

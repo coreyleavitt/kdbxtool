@@ -86,6 +86,7 @@ class DecryptedPayload:
     header: KdbxHeader
     inner_header: InnerHeader
     xml_data: bytes
+    transformed_key: bytes | None = None  # For caching to speed up repeated opens
 
 
 class Kdbx4Reader:
@@ -103,15 +104,17 @@ class Kdbx4Reader:
         self,
         password: str | None = None,
         keyfile_data: bytes | None = None,
+        transformed_key: bytes | None = None,
     ) -> DecryptedPayload:
         """Decrypt the KDBX4 file.
 
         Args:
             password: Optional password
             keyfile_data: Optional keyfile contents
+            transformed_key: Optional precomputed transformed key (skips KDF)
 
         Returns:
-            DecryptedPayload with header, inner header, and XML
+            DecryptedPayload with header, inner header, XML, and transformed_key
 
         Raises:
             ValueError: If decryption fails (wrong credentials, corrupted file)
@@ -134,18 +137,23 @@ class Kdbx4Reader:
         if not constant_time_compare(computed_hash, header_hash):
             raise CorruptedDataError("Header hash mismatch - file may be corrupted")
 
-        # Derive composite key from credentials
-        composite_key = derive_composite_key(
-            password=password,
-            keyfile_data=keyfile_data,
-        )
-
-        # Derive master key using KDF
-        master_key = self._derive_master_key(header, composite_key)
+        # Get transformed key - either use provided one or derive via KDF
+        if transformed_key is not None:
+            # Use precomputed transformed key (skips expensive KDF)
+            master_key_bytes = transformed_key
+        else:
+            # Derive composite key from credentials
+            composite_key = derive_composite_key(
+                password=password,
+                keyfile_data=keyfile_data,
+            )
+            # Derive master key using KDF (slow)
+            master_key = self._derive_master_key(header, composite_key)
+            master_key_bytes = master_key.data
 
         # Derive keys for HMAC and encryption
         hmac_key, cipher_key = self._derive_keys(
-            master_key.data, header.master_seed
+            master_key_bytes, header.master_seed
         )
 
         # Verify header HMAC
@@ -179,6 +187,7 @@ class Kdbx4Reader:
             header=header,
             inner_header=inner_header,
             xml_data=xml_data,
+            transformed_key=master_key_bytes,
         )
 
     def _derive_master_key(
@@ -374,6 +383,7 @@ class Kdbx4Writer:
         xml_data: bytes,
         password: str | None = None,
         keyfile_data: bytes | None = None,
+        transformed_key: bytes | None = None,
     ) -> bytes:
         """Encrypt database to KDBX4 format.
 
@@ -383,6 +393,7 @@ class Kdbx4Writer:
             xml_data: XML database content
             password: Optional password
             keyfile_data: Optional keyfile contents
+            transformed_key: Optional precomputed transformed key (skips KDF)
 
         Returns:
             Complete KDBX4 file as bytes
@@ -390,18 +401,23 @@ class Kdbx4Writer:
         if header.version != KdbxVersion.KDBX4:
             raise UnsupportedVersionError(header.version.value, 0)
 
-        # Derive composite key from credentials
-        composite_key = derive_composite_key(
-            password=password,
-            keyfile_data=keyfile_data,
-        )
-
-        # Derive master key using KDF
-        master_key = self._derive_master_key(header, composite_key)
+        # Get transformed key - either use provided one or derive via KDF
+        if transformed_key is not None:
+            # Use precomputed transformed key (skips expensive KDF)
+            master_key_bytes = transformed_key
+        else:
+            # Derive composite key from credentials
+            composite_key = derive_composite_key(
+                password=password,
+                keyfile_data=keyfile_data,
+            )
+            # Derive master key using KDF (slow)
+            master_key = self._derive_master_key(header, composite_key)
+            master_key_bytes = master_key.data
 
         # Derive keys for HMAC and encryption
         hmac_key, cipher_key = self._derive_keys(
-            master_key.data, header.master_seed
+            master_key_bytes, header.master_seed
         )
 
         # Build inner header
@@ -548,6 +564,7 @@ def read_kdbx4(
     data: bytes,
     password: str | None = None,
     keyfile_data: bytes | None = None,
+    transformed_key: bytes | None = None,
 ) -> DecryptedPayload:
     """Convenience function to read a KDBX4 file.
 
@@ -555,12 +572,17 @@ def read_kdbx4(
         data: Complete file contents
         password: Optional password
         keyfile_data: Optional keyfile contents
+        transformed_key: Optional precomputed transformed key (skips KDF)
 
     Returns:
-        DecryptedPayload with header, inner header, and XML
+        DecryptedPayload with header, inner header, XML, and transformed_key
     """
     reader = Kdbx4Reader(data)
-    return reader.decrypt(password=password, keyfile_data=keyfile_data)
+    return reader.decrypt(
+        password=password,
+        keyfile_data=keyfile_data,
+        transformed_key=transformed_key,
+    )
 
 
 def write_kdbx4(
@@ -569,6 +591,7 @@ def write_kdbx4(
     xml_data: bytes,
     password: str | None = None,
     keyfile_data: bytes | None = None,
+    transformed_key: bytes | None = None,
 ) -> bytes:
     """Convenience function to write a KDBX4 file.
 
@@ -578,6 +601,7 @@ def write_kdbx4(
         xml_data: XML database content
         password: Optional password
         keyfile_data: Optional keyfile contents
+        transformed_key: Optional precomputed transformed key (skips KDF)
 
     Returns:
         Complete KDBX4 file as bytes
@@ -589,4 +613,5 @@ def write_kdbx4(
         xml_data=xml_data,
         password=password,
         keyfile_data=keyfile_data,
+        transformed_key=transformed_key,
     )

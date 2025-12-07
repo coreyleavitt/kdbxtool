@@ -14,12 +14,23 @@ A modern, secure Python library for reading and writing KeePass KDBX databases.
 - **Type-safe**: Full type hints, Python 3.12+ features, mypy strict compatible
 - **Modern API**: Clean, Pythonic interface with context manager support
 - **KDBX4 focused**: First-class support for modern KeePass format with Argon2id
+- **Multiple ciphers**: AES-256-CBC, ChaCha20, and Twofish-256-CBC (optional)
 
 ## Installation
 
 ```bash
 pip install kdbxtool
 ```
+
+### Optional: Twofish Support
+
+For legacy databases encrypted with Twofish-256-CBC:
+
+```bash
+pip install kdbxtool[twofish]
+```
+
+This installs [oxifish](https://github.com/coreyleavitt/oxifish), a Rust-based Twofish implementation.
 
 ## Quick Start
 

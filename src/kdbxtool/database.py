@@ -531,6 +531,42 @@ class Database:
         data = self.to_bytes(regenerate_seeds=regenerate_seeds)
         self._filepath.write_bytes(data)
 
+    def reload(self) -> None:
+        """Reload the database from disk using stored credentials.
+
+        Re-reads the database file and replaces all in-memory state with
+        the current file contents. Useful for discarding unsaved changes
+        or syncing with external modifications.
+
+        Raises:
+            DatabaseError: If database wasn't opened from a file
+            MissingCredentialsError: If no credentials are stored
+        """
+        if self._filepath is None:
+            raise DatabaseError(
+                "Cannot reload: database wasn't opened from a file"
+            )
+
+        if self._password is None and self._keyfile_data is None:
+            raise MissingCredentialsError()
+
+        # Re-read and parse the file
+        data = self._filepath.read_bytes()
+        reloaded = self.open_bytes(
+            data,
+            password=self._password,
+            keyfile_data=self._keyfile_data,
+            filepath=self._filepath,
+        )
+
+        # Copy all state from reloaded database
+        self._root_group = reloaded._root_group
+        self._settings = reloaded._settings
+        self._header = reloaded._header
+        self._inner_header = reloaded._inner_header
+        self._binaries = reloaded._binaries
+        self._opened_as_kdbx3 = reloaded._opened_as_kdbx3
+
     def to_bytes(self, *, regenerate_seeds: bool = True) -> bytes:
         """Serialize the database to KDBX4 format.
 

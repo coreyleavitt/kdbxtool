@@ -266,6 +266,41 @@ class Entry:
         history_entry = HistoryEntry.from_entry(self)
         self.history.append(history_entry)
 
+    def delete_history(
+        self, history_entry: HistoryEntry | None = None, *, all: bool = False
+    ) -> None:
+        """Delete history entries.
+
+        Either deletes a specific history entry or all history entries.
+        At least one of history_entry or all=True must be specified.
+
+        Args:
+            history_entry: Specific history entry to delete
+            all: If True, delete all history entries
+
+        Raises:
+            ValueError: If neither history_entry nor all=True is specified
+            ValueError: If history_entry is not in this entry's history
+        """
+        if history_entry is None and not all:
+            raise ValueError("Must specify history_entry or all=True")
+
+        if all:
+            self.history.clear()
+            return
+
+        if history_entry not in self.history:
+            raise ValueError("History entry not found in this entry's history")
+
+        self.history.remove(history_entry)
+
+    def clear_history(self) -> None:
+        """Clear all history entries.
+
+        This is a convenience method equivalent to delete_history(all=True).
+        """
+        self.history.clear()
+
     def move_to(self, destination: Group) -> None:
         """Move this entry to a different group.
 

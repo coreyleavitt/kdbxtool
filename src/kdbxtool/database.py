@@ -32,7 +32,7 @@ from .exceptions import (
     MissingCredentialsError,
     UnknownCipherError,
 )
-from .models import Entry, Group, HistoryEntry, Times
+from .models import Attachment, Entry, Group, HistoryEntry, Times
 from .models.entry import AutoType, BinaryRef, StringField
 from .parsing import CompressionType, KdbxHeader, KdbxVersion
 from .parsing.kdbx3 import read_kdbx3
@@ -604,43 +604,79 @@ class Database:
         self,
         title: str | None = None,
         username: str | None = None,
+        password: str | None = None,
         url: str | None = None,
+        notes: str | None = None,
+        otp: str | None = None,
         tags: list[str] | None = None,
+        string: dict[str, str] | None = None,
+        autotype_enabled: bool | None = None,
+        autotype_sequence: str | None = None,
+        autotype_window: str | None = None,
         uuid: uuid_module.UUID | None = None,
         path: list[str] | str | None = None,
         recursive: bool = True,
-    ) -> list[Entry]:
+        history: bool = False,
+        first: bool = False,
+    ) -> list[Entry] | Entry | None:
         """Find entries matching criteria.
 
         Args:
             title: Match entries with this title
             username: Match entries with this username
+            password: Match entries with this password
             url: Match entries with this URL
+            notes: Match entries with these notes
+            otp: Match entries with this OTP
             tags: Match entries with all these tags
+            string: Match entries with custom properties (dict of key:value)
+            autotype_enabled: Filter by AutoType enabled state
+            autotype_sequence: Match entries with this AutoType sequence
+            autotype_window: Match entries with this AutoType window
             uuid: Match entry with this UUID
             path: Path to entry as list of group names ending with entry title,
                 or as a '/'-separated string. When specified, other criteria
                 are ignored.
             recursive: Search in subgroups
+            history: Include history entries in search
+            first: If True, return first match or None. If False, return list.
 
         Returns:
-            List of matching entries
+            If first=True: Entry or None
+            If first=False: List of matching entries
         """
         # Path-based search
         if path is not None:
-            return self._find_entry_by_path(path)
+            results = self._find_entry_by_path(path)
+            if first:
+                return results[0] if results else None
+            return results
 
         if uuid is not None:
             entry = self._root_group.find_entry_by_uuid(uuid, recursive=recursive)
+            if first:
+                return entry
             return [entry] if entry else []
 
-        return self._root_group.find_entries(
+        results = self._root_group.find_entries(
             title=title,
             username=username,
+            password=password,
             url=url,
+            notes=notes,
+            otp=otp,
             tags=tags,
+            string=string,
+            autotype_enabled=autotype_enabled,
+            autotype_sequence=autotype_sequence,
+            autotype_window=autotype_window,
             recursive=recursive,
+            history=history,
         )
+
+        if first:
+            return results[0] if results else None
+        return results
 
     def _find_entry_by_path(self, path: list[str] | str) -> list[Entry]:
         """Find entry by path.
@@ -743,10 +779,13 @@ class Database:
         self,
         title: str | None = None,
         username: str | None = None,
+        password: str | None = None,
         url: str | None = None,
         notes: str | None = None,
+        otp: str | None = None,
         recursive: bool = True,
         case_sensitive: bool = False,
+        history: bool = False,
     ) -> list[Entry]:
         """Find entries where fields contain the given substrings.
 
@@ -755,10 +794,13 @@ class Database:
         Args:
             title: Match entries whose title contains this substring
             username: Match entries whose username contains this substring
+            password: Match entries whose password contains this substring
             url: Match entries whose URL contains this substring
             notes: Match entries whose notes contain this substring
+            otp: Match entries whose OTP contains this substring
             recursive: Search in subgroups
             case_sensitive: If False (default), matching is case-insensitive
+            history: Include history entries in search
 
         Returns:
             List of matching entries
@@ -766,20 +808,26 @@ class Database:
         return self._root_group.find_entries_contains(
             title=title,
             username=username,
+            password=password,
             url=url,
             notes=notes,
+            otp=otp,
             recursive=recursive,
             case_sensitive=case_sensitive,
+            history=history,
         )
 
     def find_entries_regex(
         self,
         title: str | None = None,
         username: str | None = None,
+        password: str | None = None,
         url: str | None = None,
         notes: str | None = None,
+        otp: str | None = None,
         recursive: bool = True,
         case_sensitive: bool = False,
+        history: bool = False,
     ) -> list[Entry]:
         """Find entries where fields match the given regex patterns.
 
@@ -788,10 +836,13 @@ class Database:
         Args:
             title: Regex pattern to match against title
             username: Regex pattern to match against username
+            password: Regex pattern to match against password
             url: Regex pattern to match against URL
             notes: Regex pattern to match against notes
+            otp: Regex pattern to match against OTP
             recursive: Search in subgroups
             case_sensitive: If False (default), matching is case-insensitive
+            history: Include history entries in search
 
         Returns:
             List of matching entries
@@ -802,11 +853,82 @@ class Database:
         return self._root_group.find_entries_regex(
             title=title,
             username=username,
+            password=password,
             url=url,
             notes=notes,
+            otp=otp,
             recursive=recursive,
             case_sensitive=case_sensitive,
+            history=history,
         )
+
+    def find_attachments(
+        self,
+        id: int | None = None,
+        filename: str | None = None,
+        regex: bool = False,
+        recursive: bool = True,
+        history: bool = False,
+        first: bool = False,
+    ) -> list[Attachment] | Attachment | None:
+        """Find attachments in the database.
+
+        Args:
+            id: Match attachments with this binary reference ID
+            filename: Match attachments with this filename (exact or regex)
+            regex: If True, treat filename as a regex pattern
+            recursive: Search in subgroups
+            history: Include history entries in search
+            first: If True, return first match or None. If False, return list.
+
+        Returns:
+            If first=True: Attachment or None
+            If first=False: List of matching attachments
+        """
+        import re as re_module
+
+        results: list[Attachment] = []
+        pattern: re_module.Pattern[str] | None = None
+
+        if regex and filename is not None:
+            pattern = re_module.compile(filename)
+
+        for entry in self._root_group.iter_entries(
+            recursive=recursive, history=history
+        ):
+            for binary_ref in entry.binaries:
+                # Check ID filter
+                if id is not None and binary_ref.ref != id:
+                    continue
+
+                # Check filename filter
+                if filename is not None:
+                    if regex and pattern is not None:
+                        if not pattern.search(binary_ref.key):
+                            continue
+                    elif binary_ref.key != filename:
+                        continue
+
+                attachment = Attachment(
+                    filename=binary_ref.key,
+                    id=binary_ref.ref,
+                    entry=entry,
+                )
+                results.append(attachment)
+
+                if first:
+                    return attachment
+
+        if first:
+            return None
+        return results
+
+    @property
+    def attachments(self) -> list[Attachment]:
+        """Get all attachments in the database."""
+        result = self.find_attachments(filename=".*", regex=True)
+        # find_attachments returns list when first=False (default)
+        return result if isinstance(result, list) else []
 
     def iter_entries(self, recursive: bool = True) -> Iterator[Entry]:
         """Iterate over all entries in the database.

@@ -879,6 +879,32 @@ class Database:
         # Move to recycle bin
         group.move_to(recycle_bin)
 
+    def empty_group(self, group: Group) -> None:
+        """Delete all entries and subgroups from a group.
+
+        This permanently deletes all contents (does not use recycle bin).
+        The group itself is not deleted.
+
+        Args:
+            group: Group to empty
+
+        Raises:
+            ValueError: If group is not in this database
+        """
+        # Validate group is in this database
+        if group is not self._root_group:
+            found = self._root_group.find_group_by_uuid(group.uuid)
+            if found is None:
+                raise ValueError("Group is not in this database")
+
+        # Delete all subgroups (iterate over copy since we're modifying)
+        for subgroup in list(group.subgroups):
+            group.remove_subgroup(subgroup)
+
+        # Delete all entries
+        for entry in list(group.entries):
+            group.remove_entry(entry)
+
     # --- Memory protection ---
 
     def apply_protection_policy(self, entry: Entry) -> None:

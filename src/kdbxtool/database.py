@@ -575,6 +575,7 @@ class Database:
         url: str | None = None,
         tags: list[str] | None = None,
         uuid: uuid_module.UUID | None = None,
+        path: list[str] | str | None = None,
         recursive: bool = True,
     ) -> list[Entry]:
         """Find entries matching criteria.
@@ -585,11 +586,18 @@ class Database:
             url: Match entries with this URL
             tags: Match entries with all these tags
             uuid: Match entry with this UUID
+            path: Path to entry as list of group names ending with entry title,
+                or as a '/'-separated string. When specified, other criteria
+                are ignored.
             recursive: Search in subgroups
 
         Returns:
             List of matching entries
         """
+        # Path-based search
+        if path is not None:
+            return self._find_entry_by_path(path)
+
         if uuid is not None:
             entry = self._root_group.find_entry_by_uuid(uuid, recursive=recursive)
             return [entry] if entry else []
@@ -602,10 +610,50 @@ class Database:
             recursive=recursive,
         )
 
+    def _find_entry_by_path(self, path: list[str] | str) -> list[Entry]:
+        """Find entry by path.
+
+        Args:
+            path: Path as list ['group1', 'group2', 'entry_title'] or
+                string 'group1/group2/entry_title'
+
+        Returns:
+            List containing matching entry, or empty list if not found
+        """
+        if isinstance(path, str):
+            path = [p for p in path.split("/") if p]
+
+        if not path:
+            return []
+
+        # Last element is entry title, rest are group names
+        entry_title = path[-1]
+        group_path = path[:-1]
+
+        # Navigate to target group
+        current = self._root_group
+        for group_name in group_path:
+            found = None
+            for subgroup in current.subgroups:
+                if subgroup.name == group_name:
+                    found = subgroup
+                    break
+            if found is None:
+                return []
+            current = found
+
+        # Find entry in target group (non-recursive)
+        for entry in current.entries:
+            if entry.title == entry_title:
+                return [entry]
+
+        return []
+
     def find_groups(
         self,
         name: str | None = None,
         uuid: uuid_module.UUID | None = None,
+        path: list[str] | str | None = None,
         recursive: bool = True,
     ) -> list[Group]:
         """Find groups matching criteria.
@@ -613,16 +661,51 @@ class Database:
         Args:
             name: Match groups with this name
             uuid: Match group with this UUID
+            path: Path to group as list of group names or as a '/'-separated
+                string. When specified, other criteria are ignored.
             recursive: Search in nested subgroups
 
         Returns:
             List of matching groups
         """
+        # Path-based search
+        if path is not None:
+            return self._find_group_by_path(path)
+
         if uuid is not None:
             group = self._root_group.find_group_by_uuid(uuid, recursive=recursive)
             return [group] if group else []
 
         return self._root_group.find_groups(name=name, recursive=recursive)
+
+    def _find_group_by_path(self, path: list[str] | str) -> list[Group]:
+        """Find group by path.
+
+        Args:
+            path: Path as list ['group1', 'group2'] or string 'group1/group2'
+
+        Returns:
+            List containing matching group, or empty list if not found
+        """
+        if isinstance(path, str):
+            path = [p for p in path.split("/") if p]
+
+        if not path:
+            return [self._root_group]
+
+        # Navigate through path
+        current = self._root_group
+        for group_name in path:
+            found = None
+            for subgroup in current.subgroups:
+                if subgroup.name == group_name:
+                    found = subgroup
+                    break
+            if found is None:
+                return []
+            current = found
+
+        return [current]
 
     def find_entries_contains(
         self,

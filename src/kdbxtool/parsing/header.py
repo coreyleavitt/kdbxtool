@@ -25,6 +25,8 @@ from kdbxtool.exceptions import (
 )
 from kdbxtool.security import Cipher, KdfType
 
+from .context import BuildContext, ParseContext
+
 # KDBX signature bytes
 KDBX_MAGIC = bytes.fromhex("03d9a29a67fb4bb5")  # KeePass 2.x signature
 KDBX4_MAGIC = bytes.fromhex("03d9a29a67fb4bb5")  # Same magic, version differs
@@ -141,63 +143,55 @@ class KdbxHeader:
             Tuple of (parsed header, number of bytes consumed)
 
         Raises:
-            ValueError: If header is malformed or unsupported
+            InvalidSignatureError: If magic bytes don't match
+            UnsupportedVersionError: If KDBX version is not supported
+            CorruptedDataError: If header is malformed or truncated
         """
-        if len(data) < 12:
-            raise CorruptedDataError("Data too short for KDBX header")
+        ctx = ParseContext(data)
 
-        # Verify magic signature
-        magic = data[:8]
-        if magic != KDBX_MAGIC:
-            raise InvalidSignatureError(
-                f"Invalid KDBX signature: {magic.hex()} "
-                f"(expected {KDBX_MAGIC.hex()})"
-            )
+        with ctx.scope("signature"):
+            magic = ctx.read(8, "magic")
+            if magic != KDBX_MAGIC:
+                raise InvalidSignatureError(
+                    f"Invalid KDBX signature: {magic.hex()} "
+                    f"(expected {KDBX_MAGIC.hex()})"
+                )
 
-        # Parse version (little-endian)
-        version_minor, version_major = struct.unpack_from("<HH", data, 8)
+        with ctx.scope("version"):
+            version_minor = ctx.read_u16("minor")
+            version_major = ctx.read_u16("major")
 
-        if version_major == 4:
-            version = KdbxVersion.KDBX4
-        elif version_major == 3:
-            version = KdbxVersion.KDBX3
-        else:
-            raise UnsupportedVersionError(version_major, version_minor)
+            if version_major == 4:
+                version = KdbxVersion.KDBX4
+            elif version_major == 3:
+                version = KdbxVersion.KDBX3
+            else:
+                raise UnsupportedVersionError(version_major, version_minor)
 
         # Parse header fields
-        offset = 12
         header_fields: dict[HeaderFieldType, bytes] = {}
 
-        while offset < len(data):
-            if version == KdbxVersion.KDBX4:
-                # KDBX4: 1-byte type, 4-byte length
-                if offset + 5 > len(data):
-                    raise CorruptedDataError("Truncated header field")
-                field_type = data[offset]
-                field_len = struct.unpack_from("<I", data, offset + 1)[0]
-                offset += 5
-            else:
-                # KDBX3: 1-byte type, 2-byte length
-                if offset + 3 > len(data):
-                    raise CorruptedDataError("Truncated header field")
-                field_type = data[offset]
-                field_len = struct.unpack_from("<H", data, offset + 1)[0]
-                offset += 3
+        with ctx.scope("fields"):
+            while not ctx.exhausted:
+                field_type = ctx.read_u8("type")
 
-            if offset + field_len > len(data):
-                raise CorruptedDataError(f"Truncated header field data at offset {offset}")
+                if version == KdbxVersion.KDBX4:
+                    # KDBX4: 4-byte length
+                    field_len = ctx.read_u32("length")
+                else:
+                    # KDBX3: 2-byte length
+                    field_len = ctx.read_u16("length")
 
-            field_data = data[offset : offset + field_len]
-            offset += field_len
+                field_data = ctx.read(field_len, "data")
 
-            with contextlib.suppress(ValueError):
-                header_fields[HeaderFieldType(field_type)] = field_data
+                with contextlib.suppress(ValueError):
+                    header_fields[HeaderFieldType(field_type)] = field_data
 
-            if field_type == HeaderFieldType.END:
-                break
+                if field_type == HeaderFieldType.END:
+                    break
 
         # Extract required fields
-        raw_header = data[:offset]
+        raw_header = data[: ctx.offset]
 
         # Cipher ID (required)
         if HeaderFieldType.CIPHER_ID not in header_fields:
@@ -234,7 +228,7 @@ class KdbxHeader:
                 master_seed,
                 encryption_iv,
                 raw_header,
-                offset,
+                ctx.offset,
             )
         else:
             return cls._parse_kdbx3_kdf(
@@ -245,7 +239,7 @@ class KdbxHeader:
                 master_seed,
                 encryption_iv,
                 raw_header,
-                offset,
+                ctx.offset,
             )
 
     @classmethod
@@ -389,66 +383,49 @@ class KdbxHeader:
         - 0x18: String
         - 0x42: ByteArray
         """
-        if len(data) < 2:
-            raise CorruptedDataError("VariantDictionary too short")
+        ctx = ParseContext(data)
 
-        version = struct.unpack_from("<H", data, 0)[0]
-        if version != 0x0100:
-            raise CorruptedDataError(f"Unsupported VariantDictionary version: {version:#x}")
+        with ctx.scope("variant_dict"):
+            version = ctx.read_u16("version")
+            if version != 0x0100:
+                raise CorruptedDataError(
+                    f"Unsupported VariantDictionary version: {version:#x}"
+                )
 
-        result: dict[str, bytes | int | bool | str] = {}
-        offset = 2
+            result: dict[str, bytes | int | bool | str] = {}
 
-        while offset < len(data):
-            if offset + 1 > len(data):
-                break
+            while not ctx.exhausted:
+                entry_type = ctx.read_u8("entry_type")
 
-            entry_type = data[offset]
-            offset += 1
+                if entry_type == 0x00:  # End
+                    break
 
-            if entry_type == 0x00:  # End
-                break
+                with ctx.scope(f"entry[{entry_type:#x}]"):
+                    # Read key
+                    key_data = ctx.read_bytes_prefixed("key")
+                    key = key_data.decode("utf-8")
 
-            # Read key
-            if offset + 4 > len(data):
-                raise CorruptedDataError("Truncated VariantDictionary key length")
-            key_len = struct.unpack_from("<I", data, offset)[0]
-            offset += 4
+                    # Read value
+                    val_data = ctx.read_bytes_prefixed("value")
 
-            if offset + key_len > len(data):
-                raise CorruptedDataError("Truncated VariantDictionary key")
-            key = data[offset : offset + key_len].decode("utf-8")
-            offset += key_len
-
-            # Read value
-            if offset + 4 > len(data):
-                raise CorruptedDataError("Truncated VariantDictionary value length")
-            val_len = struct.unpack_from("<I", data, offset)[0]
-            offset += 4
-
-            if offset + val_len > len(data):
-                raise CorruptedDataError("Truncated VariantDictionary value")
-            val_data = data[offset : offset + val_len]
-            offset += val_len
-
-            # Parse value based on type
-            if entry_type == 0x04:  # UInt32
-                result[key] = struct.unpack("<I", val_data)[0]
-            elif entry_type == 0x05:  # UInt64
-                result[key] = struct.unpack("<Q", val_data)[0]
-            elif entry_type == 0x08:  # Bool
-                result[key] = val_data[0] != 0
-            elif entry_type == 0x0C:  # Int32
-                result[key] = struct.unpack("<i", val_data)[0]
-            elif entry_type == 0x0D:  # Int64
-                result[key] = struct.unpack("<q", val_data)[0]
-            elif entry_type == 0x42:  # ByteArray
-                result[key] = val_data
-            elif entry_type == 0x18:  # String
-                result[key] = val_data.decode("utf-8")
-            else:
-                # Unknown type, store as bytes
-                result[key] = val_data
+                    # Parse value based on type
+                    if entry_type == 0x04:  # UInt32
+                        result[key] = struct.unpack("<I", val_data)[0]
+                    elif entry_type == 0x05:  # UInt64
+                        result[key] = struct.unpack("<Q", val_data)[0]
+                    elif entry_type == 0x08:  # Bool
+                        result[key] = val_data[0] != 0
+                    elif entry_type == 0x0C:  # Int32
+                        result[key] = struct.unpack("<i", val_data)[0]
+                    elif entry_type == 0x0D:  # Int64
+                        result[key] = struct.unpack("<q", val_data)[0]
+                    elif entry_type == 0x42:  # ByteArray
+                        result[key] = val_data
+                    elif entry_type == 0x18:  # String
+                        result[key] = val_data.decode("utf-8")
+                    else:
+                        # Unknown type, store as bytes
+                        result[key] = val_data
 
         return result
 
@@ -459,65 +436,56 @@ class KdbxHeader:
             Binary header data ready to be written to file
 
         Raises:
-            ValueError: If header is incomplete or invalid
+            UnsupportedVersionError: If not KDBX4 format
+            KdfError: If Argon2 parameters are missing
         """
         if self.version != KdbxVersion.KDBX4:
             raise UnsupportedVersionError(self.version.value, 0)
 
-        parts = []
+        ctx = BuildContext()
 
         # Magic and version
-        parts.append(KDBX_MAGIC)
-        parts.append(struct.pack("<HH", 1, 4))  # Minor 1, Major 4
-
-        def add_field(field_type: HeaderFieldType, data: bytes) -> None:
-            """Add a header field in KDBX4 format."""
-            parts.append(struct.pack("<BI", field_type.value, len(data)))
-            parts.append(data)
+        ctx.write(KDBX_MAGIC)
+        ctx.write_u16(1)  # Minor version
+        ctx.write_u16(4)  # Major version
 
         # Cipher ID
-        add_field(HeaderFieldType.CIPHER_ID, self.cipher.value)
+        ctx.write_tlv(HeaderFieldType.CIPHER_ID, self.cipher.value)
 
         # Compression
-        add_field(
+        ctx.write_tlv(
             HeaderFieldType.COMPRESSION_FLAGS,
             struct.pack("<I", self.compression.value),
         )
 
         # Master seed
-        add_field(HeaderFieldType.MASTER_SEED, self.master_seed)
+        ctx.write_tlv(HeaderFieldType.MASTER_SEED, self.master_seed)
 
         # Encryption IV
-        add_field(HeaderFieldType.ENCRYPTION_IV, self.encryption_iv)
+        ctx.write_tlv(HeaderFieldType.ENCRYPTION_IV, self.encryption_iv)
 
         # KDF parameters as VariantDictionary
         kdf_dict = self._build_kdf_variant_dict()
-        add_field(HeaderFieldType.KDF_PARAMETERS, kdf_dict)
+        ctx.write_tlv(HeaderFieldType.KDF_PARAMETERS, kdf_dict)
 
         # End of header
-        add_field(HeaderFieldType.END, b"\r\n\r\n")
+        ctx.write_tlv(HeaderFieldType.END, b"\r\n\r\n")
 
-        return b"".join(parts)
+        return ctx.build()
 
     def _build_kdf_variant_dict(self) -> bytes:
         """Build VariantDictionary for KDF parameters."""
-        parts = []
+        ctx = BuildContext()
 
         # Version
-        parts.append(struct.pack("<H", 0x0100))
+        ctx.write_u16(0x0100)
 
-        def add_entry(
-            entry_type: int,
-            key: str,
-            value: bytes,
-        ) -> None:
+        def add_entry(entry_type: int, key: str, value: bytes) -> None:
             """Add an entry to the variant dictionary."""
             key_bytes = key.encode("utf-8")
-            parts.append(struct.pack("<B", entry_type))
-            parts.append(struct.pack("<I", len(key_bytes)))
-            parts.append(key_bytes)
-            parts.append(struct.pack("<I", len(value)))
-            parts.append(value)
+            ctx.write_u8(entry_type)
+            ctx.write_bytes_prefixed(key_bytes)
+            ctx.write_bytes_prefixed(value)
 
         # KDF UUID
         add_entry(0x42, "$UUID", self.kdf_type.value)
@@ -543,6 +511,6 @@ class KdbxHeader:
             add_entry(0x04, "V", struct.pack("<I", 0x13))
 
         # End marker
-        parts.append(struct.pack("<B", 0x00))
+        ctx.write_u8(0x00)
 
-        return b"".join(parts)
+        return ctx.build()

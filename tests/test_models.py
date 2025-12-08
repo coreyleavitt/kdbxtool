@@ -49,6 +49,7 @@ class TestTimes:
 
         # Small delay to ensure time difference
         import time
+
         time.sleep(0.01)
 
         times.touch()
@@ -62,6 +63,7 @@ class TestTimes:
         original_mtime = times.last_modification_time
 
         import time
+
         time.sleep(0.01)
 
         times.touch(modify=True)
@@ -268,6 +270,7 @@ class TestHistoryEntry:
         history1 = HistoryEntry.from_entry(entry)
 
         import time
+
         time.sleep(0.01)
         entry.times.last_modification_time = datetime.now(timezone.utc)
         history2 = HistoryEntry.from_entry(entry)

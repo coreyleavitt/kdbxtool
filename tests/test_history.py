@@ -55,9 +55,7 @@ class TestDeleteHistory:
         with pytest.raises(ValueError, match="Must specify"):
             entry.delete_history()
 
-    def test_delete_history_entry_not_found_raises(
-        self, entry_with_history: Entry
-    ) -> None:
+    def test_delete_history_entry_not_found_raises(self, entry_with_history: Entry) -> None:
         """Test that deleting non-existent history entry raises error."""
         entry = entry_with_history
         other_entry = Entry.create(title="Other")

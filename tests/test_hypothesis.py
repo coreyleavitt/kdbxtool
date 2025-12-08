@@ -207,9 +207,7 @@ class TestBinaryAttachmentRoundtrip:
         attachment_count=st.integers(min_value=1, max_value=3),
         data=binary_data,
     )
-    def test_multiple_attachments_roundtrip(
-        self, attachment_count: int, data: bytes
-    ) -> None:
+    def test_multiple_attachments_roundtrip(self, attachment_count: int, data: bytes) -> None:
         """Multiple attachments on one entry should survive roundtrip."""
         db = Database.create(password="test")
         entry = db.root_group.create_entry(title="Test")

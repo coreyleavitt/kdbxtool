@@ -143,9 +143,7 @@ class Kdbx3Reader:
             transformed_key=master_key.data,
         )
 
-    def _derive_master_key(
-        self, header: KdbxHeader, composite_key: SecureBytes
-    ) -> SecureBytes:
+    def _derive_master_key(self, header: KdbxHeader, composite_key: SecureBytes) -> SecureBytes:
         """Derive master key using AES-KDF."""
         if header.aes_kdf_rounds is None:
             raise KdfError("Missing AES-KDF rounds in header")

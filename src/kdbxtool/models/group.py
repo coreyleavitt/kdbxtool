@@ -142,9 +142,7 @@ class Group:
                 raise ValueError(f"No custom icon found with name: {value}")
             self.custom_icon_uuid = icon_uuid
         else:
-            raise TypeError(
-                f"custom_icon must be UUID, str, or None, not {type(value).__name__}"
-            )
+            raise TypeError(f"custom_icon must be UUID, str, or None, not {type(value).__name__}")
 
     def touch(self, modify: bool = False) -> None:
         """Update access time, optionally modification time."""
@@ -368,9 +366,7 @@ class Group:
 
     # --- Iteration and search ---
 
-    def iter_entries(
-        self, recursive: bool = True, history: bool = False
-    ) -> Iterator[Entry]:
+    def iter_entries(self, recursive: bool = True, history: bool = False) -> Iterator[Entry]:
         """Iterate over entries in this group.
 
         Args:
@@ -402,9 +398,7 @@ class Group:
             if recursive:
                 yield from subgroup.iter_groups(recursive=True)
 
-    def find_entry_by_uuid(
-        self, uuid: uuid_module.UUID, recursive: bool = True
-    ) -> Entry | None:
+    def find_entry_by_uuid(self, uuid: uuid_module.UUID, recursive: bool = True) -> Entry | None:
         """Find an entry by UUID.
 
         Args:
@@ -419,9 +413,7 @@ class Group:
                 return entry
         return None
 
-    def find_group_by_uuid(
-        self, uuid: uuid_module.UUID, recursive: bool = True
-    ) -> Group | None:
+    def find_group_by_uuid(self, uuid: uuid_module.UUID, recursive: bool = True) -> Group | None:
         """Find a group by UUID.
 
         Args:
@@ -492,11 +484,10 @@ class Group:
                 continue
             if tags is not None and not all(t in entry.tags for t in tags):
                 continue
-            if string is not None:
-                if not all(
-                    entry.get_custom_property(k) == v for k, v in string.items()
-                ):
-                    continue
+            if string is not None and not all(
+                entry.get_custom_property(k) == v for k, v in string.items()
+            ):
+                continue
             if autotype_enabled is not None and entry.autotype.enabled != autotype_enabled:
                 continue
             if autotype_sequence is not None and entry.autotype.sequence != autotype_sequence:

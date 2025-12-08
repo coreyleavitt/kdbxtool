@@ -112,9 +112,7 @@ class TestEntryReindex:
         with pytest.raises(IndexError):
             e0.reindex(10)
 
-    def test_reindex_negative_out_of_bounds_raises(
-        self, group_with_entries: Group
-    ) -> None:
+    def test_reindex_negative_out_of_bounds_raises(self, group_with_entries: Group) -> None:
         """Test that negative out-of-bounds index raises error."""
         e0 = group_with_entries.entries[0]
 

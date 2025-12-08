@@ -65,9 +65,7 @@ class UnsupportedVersionError(FormatError):
     def __init__(self, version_major: int, version_minor: int) -> None:
         self.version_major = version_major
         self.version_minor = version_minor
-        super().__init__(
-            f"Unsupported KDBX version: {version_major}.{version_minor}"
-        )
+        super().__init__(f"Unsupported KDBX version: {version_major}.{version_minor}")
 
 
 class CorruptedDataError(FormatError):

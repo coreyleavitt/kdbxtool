@@ -273,3 +273,94 @@ class TestYubiKeyWithManagerInstalled:
             mock_list.return_value = []
             with pytest.raises(YubiKeyNotFoundError):
                 check_slot_configured(slot=2)
+
+
+class TestDatabaseApiYubiKey:
+    """Tests for Database API YubiKey integration."""
+
+    @patch("kdbxtool.database.YUBIKEY_AVAILABLE", False)
+    def test_open_bytes_yubikey_not_available(self) -> None:
+        """Test Database.open_bytes raises when yubikey-manager not installed."""
+        from kdbxtool.database import Database
+
+        # Create a simple test database bytes
+        db = Database.create(password="test")
+        db_bytes = db.to_bytes()
+
+        with pytest.raises(YubiKeyNotAvailableError):
+            Database.open_bytes(db_bytes, password="test", yubikey_slot=2)
+
+    @patch("kdbxtool.database.YUBIKEY_AVAILABLE", False)
+    def test_to_bytes_yubikey_not_available(self) -> None:
+        """Test Database.to_bytes raises when yubikey-manager not installed."""
+        from kdbxtool.database import Database
+
+        db = Database.create(password="test")
+        with pytest.raises(YubiKeyNotAvailableError):
+            db.to_bytes(yubikey_slot=2)
+
+    @patch("kdbxtool.database.YUBIKEY_AVAILABLE", False)
+    def test_save_yubikey_not_available(self, tmp_path: "pytest.TempPathFactory") -> None:
+        """Test Database.save raises when yubikey-manager not installed."""
+        from pathlib import Path
+
+        from kdbxtool.database import Database
+
+        db = Database.create(password="test")
+        db_path = Path(str(tmp_path)) / "test.kdbx"
+        with pytest.raises(YubiKeyNotAvailableError):
+            db.save(db_path, yubikey_slot=2)
+
+
+@pytest.mark.skipif(
+    not is_yubikey_available(),
+    reason="yubikey-manager not installed - cannot mock internal functions",
+)
+class TestDatabaseApiYubiKeyMocked:
+    """Tests for Database API YubiKey integration with mocked hardware."""
+
+    def test_open_and_save_with_yubikey(self, tmp_path: "pytest.TempPathFactory") -> None:
+        """Test Database open/save cycle with mocked YubiKey."""
+        from pathlib import Path
+
+        from kdbxtool.database import Database
+
+        # Create a test database
+        db = Database.create(password="test")
+        db.root.name = "YubiKey Test"
+
+        # Mock YubiKey response for save
+        mock_response = MagicMock()
+        mock_response.data = os.urandom(20)
+
+        with patch("kdbxtool.database.compute_challenge_response") as mock_cr:
+            mock_cr.return_value = mock_response
+
+            # Save with YubiKey
+            db_path = Path(str(tmp_path)) / "yubikey_test.kdbx"
+            db.save(db_path, yubikey_slot=2)
+
+            # Verify compute_challenge_response was called with master_seed
+            assert mock_cr.called
+            call_args = mock_cr.call_args
+            # First positional arg should be the 32-byte master_seed
+            assert len(call_args[0][0]) == 32
+
+    def test_to_bytes_with_yubikey(self) -> None:
+        """Test Database.to_bytes with mocked YubiKey."""
+        from kdbxtool.database import Database
+
+        db = Database.create(password="test")
+
+        mock_response = MagicMock()
+        mock_response.data = os.urandom(20)
+
+        with patch("kdbxtool.database.compute_challenge_response") as mock_cr:
+            mock_cr.return_value = mock_response
+            result = db.to_bytes(yubikey_slot=1)
+
+            assert isinstance(result, bytes)
+            assert mock_cr.called
+            # Verify YubiKeyConfig was passed with correct slot
+            config = mock_cr.call_args[0][1]
+            assert config.slot == 1

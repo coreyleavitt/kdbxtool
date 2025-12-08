@@ -105,6 +105,7 @@ class Kdbx4Reader:
         password: str | None = None,
         keyfile_data: bytes | None = None,
         transformed_key: bytes | None = None,
+        yubikey_response: bytes | None = None,
     ) -> DecryptedPayload:
         """Decrypt the KDBX4 file.
 
@@ -112,6 +113,7 @@ class Kdbx4Reader:
             password: Optional password
             keyfile_data: Optional keyfile contents
             transformed_key: Optional precomputed transformed key (skips KDF)
+            yubikey_response: Optional 20-byte YubiKey HMAC-SHA1 response
 
         Returns:
             DecryptedPayload with header, inner header, XML, and transformed_key
@@ -142,10 +144,11 @@ class Kdbx4Reader:
             # Use precomputed transformed key (skips expensive KDF)
             master_key_bytes = transformed_key
         else:
-            # Derive composite key from credentials
+            # Derive composite key from credentials (including YubiKey response if provided)
             composite_key = derive_composite_key(
                 password=password,
                 keyfile_data=keyfile_data,
+                yubikey_response=yubikey_response,
             )
             # Derive master key using KDF (slow)
             master_key = self._derive_master_key(header, composite_key)
@@ -374,6 +377,7 @@ class Kdbx4Writer:
         password: str | None = None,
         keyfile_data: bytes | None = None,
         transformed_key: bytes | None = None,
+        yubikey_response: bytes | None = None,
     ) -> bytes:
         """Encrypt database to KDBX4 format.
 
@@ -384,6 +388,7 @@ class Kdbx4Writer:
             password: Optional password
             keyfile_data: Optional keyfile contents
             transformed_key: Optional precomputed transformed key (skips KDF)
+            yubikey_response: Optional 20-byte YubiKey HMAC-SHA1 response
 
         Returns:
             Complete KDBX4 file as bytes
@@ -396,10 +401,11 @@ class Kdbx4Writer:
             # Use precomputed transformed key (skips expensive KDF)
             master_key_bytes = transformed_key
         else:
-            # Derive composite key from credentials
+            # Derive composite key from credentials (including YubiKey response if provided)
             composite_key = derive_composite_key(
                 password=password,
                 keyfile_data=keyfile_data,
+                yubikey_response=yubikey_response,
             )
             # Derive master key using KDF (slow)
             master_key = self._derive_master_key(header, composite_key)
@@ -552,6 +558,7 @@ def read_kdbx4(
     password: str | None = None,
     keyfile_data: bytes | None = None,
     transformed_key: bytes | None = None,
+    yubikey_response: bytes | None = None,
 ) -> DecryptedPayload:
     """Convenience function to read a KDBX4 file.
 
@@ -560,6 +567,7 @@ def read_kdbx4(
         password: Optional password
         keyfile_data: Optional keyfile contents
         transformed_key: Optional precomputed transformed key (skips KDF)
+        yubikey_response: Optional 20-byte YubiKey HMAC-SHA1 response
 
     Returns:
         DecryptedPayload with header, inner header, XML, and transformed_key
@@ -569,6 +577,7 @@ def read_kdbx4(
         password=password,
         keyfile_data=keyfile_data,
         transformed_key=transformed_key,
+        yubikey_response=yubikey_response,
     )
 
 
@@ -579,6 +588,7 @@ def write_kdbx4(
     password: str | None = None,
     keyfile_data: bytes | None = None,
     transformed_key: bytes | None = None,
+    yubikey_response: bytes | None = None,
 ) -> bytes:
     """Convenience function to write a KDBX4 file.
 
@@ -589,6 +599,7 @@ def write_kdbx4(
         password: Optional password
         keyfile_data: Optional keyfile contents
         transformed_key: Optional precomputed transformed key (skips KDF)
+        yubikey_response: Optional 20-byte YubiKey HMAC-SHA1 response
 
     Returns:
         Complete KDBX4 file as bytes
@@ -601,4 +612,5 @@ def write_kdbx4(
         password=password,
         keyfile_data=keyfile_data,
         transformed_key=transformed_key,
+        yubikey_response=yubikey_response,
     )

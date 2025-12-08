@@ -13,7 +13,7 @@ from __future__ import annotations
 import hmac
 import os
 from enum import Enum
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from Cryptodome.Cipher import AES, ChaCha20
 
@@ -21,10 +21,11 @@ from kdbxtool.exceptions import TwofishNotAvailableError, UnknownCipherError
 
 # Optional Twofish support via oxifish
 try:
-    from oxifish import TwofishCBC  # type: ignore[import-not-found]
+    from oxifish import TwofishCBC
 
     TWOFISH_AVAILABLE = True
 except ImportError:
+    TwofishCBC = None  # type: ignore[misc,assignment]
     TWOFISH_AVAILABLE = False
 
 if TYPE_CHECKING:
@@ -201,7 +202,7 @@ class CipherContext:
             return aes_cipher.encrypt(plaintext)
         elif self._cipher == Cipher.TWOFISH256_CBC:
             twofish_cipher = TwofishCBC(self._key)
-            return cast(bytes, twofish_cipher.encrypt(plaintext, self._iv))
+            return twofish_cipher.encrypt(plaintext, self._iv)
         else:
             chacha_cipher = ChaCha20.new(key=self._key, nonce=self._iv)
             return chacha_cipher.encrypt(plaintext)
@@ -223,7 +224,7 @@ class CipherContext:
             return aes_cipher.decrypt(ciphertext)
         elif self._cipher == Cipher.TWOFISH256_CBC:
             twofish_cipher = TwofishCBC(self._key)
-            return cast(bytes, twofish_cipher.decrypt(ciphertext, self._iv))
+            return twofish_cipher.decrypt(ciphertext, self._iv)
         else:
             chacha_cipher = ChaCha20.new(key=self._key, nonce=self._iv)
             return chacha_cipher.decrypt(ciphertext)

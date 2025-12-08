@@ -223,6 +223,7 @@ class Database:
         self._transformed_key: bytes | None = None
         self._filepath: Path | None = None
         self._yubikey_slot: int | None = None
+        self._yubikey_serial: int | None = None
         # Set database reference on all entries and groups
         self._set_database_references(root_group)
 
@@ -333,6 +334,7 @@ class Database:
         password: str | None = None,
         keyfile: str | Path | None = None,
         yubikey_slot: int | None = None,
+        yubikey_serial: int | None = None,
     ) -> Database:
         """Open an existing KDBX database.
 
@@ -344,6 +346,8 @@ class Database:
                 If provided, the database's master_seed is used as challenge and
                 the 20-byte HMAC-SHA1 response is incorporated into key derivation.
                 Requires yubikey-manager package: pip install kdbxtool[yubikey]
+            yubikey_serial: Serial number of specific YubiKey to use when multiple
+                devices are connected. Use list_yubikeys() to discover serials.
 
         Returns:
             Database instance
@@ -372,6 +376,7 @@ class Database:
             keyfile_data=keyfile_data,
             filepath=filepath,
             yubikey_slot=yubikey_slot,
+            yubikey_serial=yubikey_serial,
         )
 
     @classmethod
@@ -383,6 +388,7 @@ class Database:
         filepath: Path | None = None,
         transformed_key: bytes | None = None,
         yubikey_slot: int | None = None,
+        yubikey_serial: int | None = None,
     ) -> Database:
         """Open a KDBX database from bytes.
 
@@ -399,6 +405,8 @@ class Database:
                 If provided, the database's master_seed is used as challenge and
                 the 20-byte HMAC-SHA1 response is incorporated into key derivation.
                 Requires yubikey-manager package: pip install kdbxtool[yubikey]
+            yubikey_serial: Serial number of specific YubiKey to use when multiple
+                devices are connected. Use list_yubikeys() to discover serials.
 
         Returns:
             Database instance
@@ -416,7 +424,7 @@ class Database:
                 from .exceptions import YubiKeyNotAvailableError
 
                 raise YubiKeyNotAvailableError()
-            config = YubiKeyConfig(slot=yubikey_slot)
+            config = YubiKeyConfig(slot=yubikey_slot, serial=yubikey_serial)
             response = compute_challenge_response(header.master_seed, config)
             yubikey_response = response.data
 
@@ -470,6 +478,7 @@ class Database:
         db._filepath = filepath
         db._opened_as_kdbx3 = is_kdbx3
         db._yubikey_slot = yubikey_slot
+        db._yubikey_serial = yubikey_serial
 
         return db
 
@@ -624,6 +633,7 @@ class Database:
         kdf_config: KdfConfig | None = None,
         cipher: Cipher | None = None,
         yubikey_slot: int | None = None,
+        yubikey_serial: int | None = None,
     ) -> None:
         """Save the database to a file.
 
@@ -651,6 +661,8 @@ class Database:
                 If provided (or if database was opened with yubikey_slot), the new
                 master_seed is used as challenge and the response is incorporated
                 into key derivation. Requires yubikey-manager package.
+            yubikey_serial: Serial number of specific YubiKey to use when multiple
+                devices are connected. Use list_yubikeys() to discover serials.
 
         Raises:
             DatabaseError: If no filepath specified and database wasn't opened from file
@@ -668,20 +680,24 @@ class Database:
         if was_kdbx3 and not save_to_new_file and not allow_upgrade:
             raise Kdbx3UpgradeRequired()
 
-        # Use provided yubikey_slot, or fall back to stored one
+        # Use provided yubikey params, or fall back to stored ones
         effective_yubikey_slot = yubikey_slot if yubikey_slot is not None else self._yubikey_slot
+        effective_yubikey_serial = yubikey_serial if yubikey_serial is not None else self._yubikey_serial
 
         data = self.to_bytes(
             regenerate_seeds=regenerate_seeds,
             kdf_config=kdf_config,
             cipher=cipher,
             yubikey_slot=effective_yubikey_slot,
+            yubikey_serial=effective_yubikey_serial,
         )
         self._filepath.write_bytes(data)
 
-        # Update stored yubikey_slot if changed
+        # Update stored yubikey params if changed
         if yubikey_slot is not None:
             self._yubikey_slot = yubikey_slot
+        if yubikey_serial is not None:
+            self._yubikey_serial = yubikey_serial
 
         # After KDBX3 upgrade, reload to get proper KDBX4 state (including transformed_key)
         if was_kdbx3:
@@ -792,6 +808,7 @@ class Database:
         kdf_config: KdfConfig | None = None,
         cipher: Cipher | None = None,
         yubikey_slot: int | None = None,
+        yubikey_serial: int | None = None,
     ) -> bytes:
         """Serialize the database to KDBX4 format.
 
@@ -817,6 +834,8 @@ class Database:
                 If provided, the (new) master_seed is used as challenge and the
                 20-byte HMAC-SHA1 response is incorporated into key derivation.
                 Requires yubikey-manager package: pip install kdbxtool[yubikey]
+            yubikey_serial: Serial number of specific YubiKey to use when multiple
+                devices are connected. Use list_yubikeys() to discover serials.
 
         Returns:
             KDBX4 file contents as bytes
@@ -866,7 +885,7 @@ class Database:
                 from .exceptions import YubiKeyNotAvailableError
 
                 raise YubiKeyNotAvailableError()
-            config = YubiKeyConfig(slot=yubikey_slot)
+            config = YubiKeyConfig(slot=yubikey_slot, serial=yubikey_serial)
             response = compute_challenge_response(self._header.master_seed, config)
             yubikey_response = response.data
 

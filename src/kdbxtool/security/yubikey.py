@@ -68,11 +68,15 @@ class YubiKeyConfig:
     Attributes:
         slot: YubiKey slot to use (1 or 2). Slot 2 is typically used for
             challenge-response as slot 1 is often used for OTP.
+        serial: Optional serial number to select a specific YubiKey when
+            multiple devices are connected. If None, uses the first device.
+            Use list_yubikeys() to discover available devices and serials.
         timeout_seconds: Timeout for challenge-response operation in seconds.
             If touch is required, this is the time to wait for the button press.
     """
 
     slot: int = 2
+    serial: int | None = None
     timeout_seconds: float = 15.0
 
     def __post_init__(self) -> None:
@@ -162,8 +166,22 @@ def compute_challenge_response(
     if not devices:
         raise YubiKeyNotFoundError()
 
-    # Use the first connected device
-    device, info = devices[0]
+    # Select device by serial number if specified, otherwise use first device
+    device = None
+    info = None
+    if config.serial is not None:
+        for dev, dev_info in devices:
+            if dev_info.serial == config.serial:
+                device = dev
+                info = dev_info
+                break
+        if device is None:
+            raise YubiKeyNotFoundError(
+                f"No YubiKey with serial {config.serial} found. "
+                f"Available serials: {[d[1].serial for d in devices if d[1].serial]}"
+            )
+    else:
+        device, info = devices[0]
 
     # Convert slot number to SLOT enum
     slot = SLOT.ONE if config.slot == 1 else SLOT.TWO
@@ -198,7 +216,7 @@ def compute_challenge_response(
         raise YubiKeyError(f"YubiKey challenge-response failed: {e}") from e
 
 
-def check_slot_configured(slot: int = 2) -> bool:
+def check_slot_configured(slot: int = 2, serial: int | None = None) -> bool:
     """Check if a YubiKey slot is configured for HMAC-SHA1.
 
     This is a convenience function to verify that a slot is properly
@@ -206,13 +224,15 @@ def check_slot_configured(slot: int = 2) -> bool:
 
     Args:
         slot: YubiKey slot to check (1 or 2).
+        serial: Optional serial number to select a specific YubiKey when
+            multiple devices are connected.
 
     Returns:
         True if the slot is configured for HMAC-SHA1, False otherwise.
 
     Raises:
         YubiKeyNotAvailableError: If yubikey-manager is not installed.
-        YubiKeyNotFoundError: If no YubiKey is connected.
+        YubiKeyNotFoundError: If no YubiKey is connected (or specified serial not found).
     """
     if not YUBIKEY_AVAILABLE:
         raise YubiKeyNotAvailableError()
@@ -221,7 +241,17 @@ def check_slot_configured(slot: int = 2) -> bool:
     if not devices:
         raise YubiKeyNotFoundError()
 
-    device, _info = devices[0]
+    # Select device by serial or use first
+    device = None
+    if serial is not None:
+        for dev, dev_info in devices:
+            if dev_info.serial == serial:
+                device = dev
+                break
+        if device is None:
+            raise YubiKeyNotFoundError(f"No YubiKey with serial {serial} found")
+    else:
+        device, _info = devices[0]
 
     try:
         connection = device.open_connection(SmartCardConnection)

@@ -46,9 +46,20 @@ from .exceptions import (
     TwofishNotAvailableError,
     UnknownCipherError,
     UnsupportedVersionError,
+    YubiKeyError,
+    YubiKeyNotAvailableError,
+    YubiKeyNotFoundError,
+    YubiKeySlotError,
+    YubiKeyTimeoutError,
 )
 from .models import Attachment, Entry, Group, HistoryEntry, Times
 from .security import AesKdfConfig, Argon2Config, Cipher, KdfType
+from .security.yubikey import (
+    YubiKeyConfig,
+    check_slot_configured,
+    is_yubikey_available,
+    list_yubikeys,
+)
 
 __all__ = [
     # Core classes
@@ -63,6 +74,11 @@ __all__ = [
     "Times",
     "Cipher",
     "KdfType",
+    # YubiKey support
+    "YubiKeyConfig",
+    "check_slot_configured",
+    "is_yubikey_available",
+    "list_yubikeys",
     # Exceptions
     "KdbxError",
     "FormatError",
@@ -84,4 +100,9 @@ __all__ = [
     "GroupNotFoundError",
     "InvalidXmlError",
     "Kdbx3UpgradeRequired",
+    "YubiKeyError",
+    "YubiKeyNotAvailableError",
+    "YubiKeyNotFoundError",
+    "YubiKeySlotError",
+    "YubiKeyTimeoutError",
 ]

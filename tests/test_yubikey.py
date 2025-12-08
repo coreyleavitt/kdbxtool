@@ -40,6 +40,16 @@ class TestYubiKeyConfig:
         config = YubiKeyConfig(timeout_seconds=30.0)
         assert config.timeout_seconds == 30.0
 
+    def test_custom_serial(self) -> None:
+        """Test custom serial configuration."""
+        config = YubiKeyConfig(serial=12345678)
+        assert config.serial == 12345678
+
+    def test_default_serial_is_none(self) -> None:
+        """Test default serial is None (use first device)."""
+        config = YubiKeyConfig()
+        assert config.serial is None
+
     def test_invalid_slot_raises(self) -> None:
         """Test that invalid slot raises ValueError."""
         with pytest.raises(ValueError, match="slot must be 1 or 2"):

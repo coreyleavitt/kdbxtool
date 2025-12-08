@@ -39,11 +39,8 @@ from .parsing import CompressionType, KdbxHeader, KdbxVersion
 from .parsing.kdbx3 import read_kdbx3
 from .parsing.kdbx4 import InnerHeader, read_kdbx4, write_kdbx4
 from .security import AesKdfConfig, Argon2Config, Cipher, KdfType
-from .security.yubikey import (
-    YUBIKEY_AVAILABLE,
-    YubiKeyConfig,
-    compute_challenge_response,
-)
+from .security import yubikey as yubikey_module
+from .security.yubikey import YubiKeyConfig, compute_challenge_response
 
 # Union type for KDF configurations
 KdfConfig = Argon2Config | AesKdfConfig
@@ -415,6 +412,10 @@ class Database:
         # Get YubiKey response if slot specified (use master_seed as challenge)
         yubikey_response: bytes | None = None
         if yubikey_slot is not None:
+            if not yubikey_module.YUBIKEY_AVAILABLE:
+                from .exceptions import YubiKeyNotAvailableError
+
+                raise YubiKeyNotAvailableError()
             config = YubiKeyConfig(slot=yubikey_slot)
             response = compute_challenge_response(header.master_seed, config)
             yubikey_response = response.data
@@ -861,7 +862,7 @@ class Database:
         # Get YubiKey response if slot specified (use new master_seed as challenge)
         yubikey_response: bytes | None = None
         if yubikey_slot is not None:
-            if not YUBIKEY_AVAILABLE:
+            if not yubikey_module.YUBIKEY_AVAILABLE:
                 from .exceptions import YubiKeyNotAvailableError
 
                 raise YubiKeyNotAvailableError()

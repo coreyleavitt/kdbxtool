@@ -278,38 +278,58 @@ class TestYubiKeyWithManagerInstalled:
 class TestDatabaseApiYubiKey:
     """Tests for Database API YubiKey integration."""
 
-    @patch("kdbxtool.database.YUBIKEY_AVAILABLE", False)
     def test_open_bytes_yubikey_not_available(self) -> None:
         """Test Database.open_bytes raises when yubikey-manager not installed."""
+        import kdbxtool.security.yubikey as yk_module
+
         from kdbxtool.database import Database
 
         # Create a simple test database bytes
         db = Database.create(password="test")
         db_bytes = db.to_bytes()
 
-        with pytest.raises(YubiKeyNotAvailableError):
-            Database.open_bytes(db_bytes, password="test", yubikey_slot=2)
+        # Patch at the actual yubikey module where it's defined
+        original = yk_module.YUBIKEY_AVAILABLE
+        try:
+            yk_module.YUBIKEY_AVAILABLE = False
+            with pytest.raises(YubiKeyNotAvailableError):
+                Database.open_bytes(db_bytes, password="test", yubikey_slot=2)
+        finally:
+            yk_module.YUBIKEY_AVAILABLE = original
 
-    @patch("kdbxtool.database.YUBIKEY_AVAILABLE", False)
     def test_to_bytes_yubikey_not_available(self) -> None:
         """Test Database.to_bytes raises when yubikey-manager not installed."""
+        import kdbxtool.security.yubikey as yk_module
+
         from kdbxtool.database import Database
 
         db = Database.create(password="test")
-        with pytest.raises(YubiKeyNotAvailableError):
-            db.to_bytes(yubikey_slot=2)
 
-    @patch("kdbxtool.database.YUBIKEY_AVAILABLE", False)
+        original = yk_module.YUBIKEY_AVAILABLE
+        try:
+            yk_module.YUBIKEY_AVAILABLE = False
+            with pytest.raises(YubiKeyNotAvailableError):
+                db.to_bytes(yubikey_slot=2)
+        finally:
+            yk_module.YUBIKEY_AVAILABLE = original
+
     def test_save_yubikey_not_available(self, tmp_path: "pytest.TempPathFactory") -> None:
         """Test Database.save raises when yubikey-manager not installed."""
+        import kdbxtool.security.yubikey as yk_module
         from pathlib import Path
 
         from kdbxtool.database import Database
 
         db = Database.create(password="test")
         db_path = Path(str(tmp_path)) / "test.kdbx"
-        with pytest.raises(YubiKeyNotAvailableError):
-            db.save(db_path, yubikey_slot=2)
+
+        original = yk_module.YUBIKEY_AVAILABLE
+        try:
+            yk_module.YUBIKEY_AVAILABLE = False
+            with pytest.raises(YubiKeyNotAvailableError):
+                db.save(db_path, yubikey_slot=2)
+        finally:
+            yk_module.YUBIKEY_AVAILABLE = original
 
 
 @pytest.mark.skipif(
@@ -327,7 +347,6 @@ class TestDatabaseApiYubiKeyMocked:
 
         # Create a test database
         db = Database.create(password="test")
-        db.root.name = "YubiKey Test"
 
         # Mock YubiKey response for save
         mock_response = MagicMock()

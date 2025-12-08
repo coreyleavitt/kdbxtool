@@ -1199,6 +1199,87 @@ class Database:
         """
         yield from self._root_group.iter_groups(recursive=recursive)
 
+    # --- Field References ---
+
+    def deref(self, value: str | None) -> str | uuid_module.UUID | None:
+        """Resolve KeePass field references in a value.
+
+        Parses field references in the format {REF:X@Y:Z} and replaces them
+        with the actual values from the referenced entries:
+        - X = Field to retrieve (T=Title, U=Username, P=Password, A=URL, N=Notes, I=UUID)
+        - Y = Field to search by (T, U, P, A, N, I)
+        - Z = Search value
+
+        References are resolved recursively, so a reference that resolves to
+        another reference will continue resolving until a final value is found.
+
+        Args:
+            value: String potentially containing field references
+
+        Returns:
+            - The resolved string with all references replaced
+            - A UUID if the final result is a UUID reference
+            - None if any referenced entry cannot be found
+            - The original value if it contains no references or is None
+
+        Example:
+            >>> # Entry with password = '{REF:P@I:ABCD1234...}'
+            >>> db.deref(entry.password)  # Returns the referenced password
+            >>>
+            >>> # With prefix/suffix: 'prefix{REF:U@I:...}suffix'
+            >>> db.deref(value)  # Returns 'prefix<username>suffix'
+        """
+        import re
+
+        if not value:
+            return value
+
+        # Pattern matches {REF:X@Y:Z} where X and Y are field codes, Z is search value
+        pattern = r"(\{REF:([TUPANI])@([TUPANI]):([^}]+)\})"
+        references = set(re.findall(pattern, value))
+
+        if not references:
+            return value
+
+        field_to_attr = {
+            "T": "title",
+            "U": "username",
+            "P": "password",
+            "A": "url",
+            "N": "notes",
+            "I": "uuid",
+        }
+
+        for ref_str, wanted_field, search_field, search_value in references:
+            wanted_attr = field_to_attr[wanted_field]
+            search_attr = field_to_attr[search_field]
+
+            # Convert UUID search value to proper UUID object
+            if search_attr == "uuid":
+                try:
+                    search_value = uuid_module.UUID(search_value)
+                except ValueError:
+                    return None
+
+            # Find the referenced entry
+            ref_entry = self.find_entries(first=True, **{search_attr: search_value})
+            if ref_entry is None:
+                return None
+
+            # Get the wanted field value
+            resolved_value = getattr(ref_entry, wanted_attr)
+            if resolved_value is None:
+                resolved_value = ""
+
+            # UUID needs special handling - convert to string for replacement
+            if isinstance(resolved_value, uuid_module.UUID):
+                resolved_value = str(resolved_value)
+
+            value = value.replace(ref_str, resolved_value)
+
+        # Recursively resolve any nested references
+        return self.deref(value)
+
     # --- Move operations ---
 
     def move_entry(self, entry: Entry, destination: Group) -> None:

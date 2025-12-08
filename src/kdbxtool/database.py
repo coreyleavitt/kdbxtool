@@ -39,6 +39,11 @@ from .parsing import CompressionType, KdbxHeader, KdbxVersion
 from .parsing.kdbx3 import read_kdbx3
 from .parsing.kdbx4 import InnerHeader, read_kdbx4, write_kdbx4
 from .security import AesKdfConfig, Argon2Config, Cipher, KdfType
+from .security.yubikey import (
+    YUBIKEY_AVAILABLE,
+    YubiKeyConfig,
+    compute_challenge_response,
+)
 
 # Union type for KDF configurations
 KdfConfig = Argon2Config | AesKdfConfig
@@ -220,6 +225,7 @@ class Database:
         self._keyfile_data: bytes | None = None
         self._transformed_key: bytes | None = None
         self._filepath: Path | None = None
+        self._yubikey_slot: int | None = None
         # Set database reference on all entries and groups
         self._set_database_references(root_group)
 
@@ -329,6 +335,7 @@ class Database:
         filepath: str | Path,
         password: str | None = None,
         keyfile: str | Path | None = None,
+        yubikey_slot: int | None = None,
     ) -> Database:
         """Open an existing KDBX database.
 
@@ -336,6 +343,10 @@ class Database:
             filepath: Path to the .kdbx file
             password: Database password
             keyfile: Path to keyfile (optional)
+            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
+                If provided, the database's master_seed is used as challenge and
+                the 20-byte HMAC-SHA1 response is incorporated into key derivation.
+                Requires yubikey-manager package: pip install kdbxtool[yubikey]
 
         Returns:
             Database instance
@@ -343,6 +354,7 @@ class Database:
         Raises:
             FileNotFoundError: If file doesn't exist
             ValueError: If credentials are wrong or file is corrupted
+            YubiKeyError: If YubiKey operation fails
         """
         filepath = Path(filepath)
         if not filepath.exists():
@@ -362,6 +374,7 @@ class Database:
             password=password,
             keyfile_data=keyfile_data,
             filepath=filepath,
+            yubikey_slot=yubikey_slot,
         )
 
     @classmethod
@@ -372,6 +385,7 @@ class Database:
         keyfile_data: bytes | None = None,
         filepath: Path | None = None,
         transformed_key: bytes | None = None,
+        yubikey_slot: int | None = None,
     ) -> Database:
         """Open a KDBX database from bytes.
 
@@ -384,12 +398,26 @@ class Database:
             keyfile_data: Keyfile contents (optional)
             filepath: Original file path (for save)
             transformed_key: Precomputed transformed key (skips KDF, faster opens)
+            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
+                If provided, the database's master_seed is used as challenge and
+                the 20-byte HMAC-SHA1 response is incorporated into key derivation.
+                Requires yubikey-manager package: pip install kdbxtool[yubikey]
 
         Returns:
             Database instance
+
+        Raises:
+            YubiKeyError: If YubiKey operation fails
         """
         # Detect version from header (parse just enough to get version)
         header, _ = KdbxHeader.parse(data)
+
+        # Get YubiKey response if slot specified (use master_seed as challenge)
+        yubikey_response: bytes | None = None
+        if yubikey_slot is not None:
+            config = YubiKeyConfig(slot=yubikey_slot)
+            response = compute_challenge_response(header.master_seed, config)
+            yubikey_response = response.data
 
         # Decrypt the file using appropriate reader
         is_kdbx3 = header.version == KdbxVersion.KDBX3
@@ -403,6 +431,13 @@ class Database:
                 UserWarning,
                 stacklevel=3,
             )
+            # KDBX3 doesn't support YubiKey CR in the same way
+            # (KeeChallenge used a sidecar XML file, not integrated)
+            if yubikey_slot is not None:
+                raise DatabaseError(
+                    "YubiKey challenge-response is not supported for KDBX3 databases. "
+                    "Upgrade to KDBX4 first."
+                )
             payload = read_kdbx3(
                 data,
                 password=password,
@@ -415,6 +450,7 @@ class Database:
                 password=password,
                 keyfile_data=keyfile_data,
                 transformed_key=transformed_key,
+                yubikey_response=yubikey_response,
             )
 
         # Parse XML into models (with protected value decryption)
@@ -432,6 +468,7 @@ class Database:
         db._transformed_key = payload.transformed_key
         db._filepath = filepath
         db._opened_as_kdbx3 = is_kdbx3
+        db._yubikey_slot = yubikey_slot
 
         return db
 
@@ -585,6 +622,7 @@ class Database:
         regenerate_seeds: bool = True,
         kdf_config: KdfConfig | None = None,
         cipher: Cipher | None = None,
+        yubikey_slot: int | None = None,
     ) -> None:
         """Save the database to a file.
 
@@ -608,10 +646,15 @@ class Database:
                 - Cipher.CHACHA20 (modern, faster in software)
                 - Cipher.TWOFISH256_CBC (requires oxifish package)
                 If not specified, preserves existing cipher.
+            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
+                If provided (or if database was opened with yubikey_slot), the new
+                master_seed is used as challenge and the response is incorporated
+                into key derivation. Requires yubikey-manager package.
 
         Raises:
             DatabaseError: If no filepath specified and database wasn't opened from file
             Kdbx3UpgradeRequired: If saving KDBX3 to original file without allow_upgrade=True
+            YubiKeyError: If YubiKey operation fails
         """
         save_to_new_file = filepath is not None
         if filepath:
@@ -624,10 +667,20 @@ class Database:
         if was_kdbx3 and not save_to_new_file and not allow_upgrade:
             raise Kdbx3UpgradeRequired()
 
+        # Use provided yubikey_slot, or fall back to stored one
+        effective_yubikey_slot = yubikey_slot if yubikey_slot is not None else self._yubikey_slot
+
         data = self.to_bytes(
-            regenerate_seeds=regenerate_seeds, kdf_config=kdf_config, cipher=cipher
+            regenerate_seeds=regenerate_seeds,
+            kdf_config=kdf_config,
+            cipher=cipher,
+            yubikey_slot=effective_yubikey_slot,
         )
         self._filepath.write_bytes(data)
+
+        # Update stored yubikey_slot if changed
+        if yubikey_slot is not None:
+            self._yubikey_slot = yubikey_slot
 
         # After KDBX3 upgrade, reload to get proper KDBX4 state (including transformed_key)
         if was_kdbx3:
@@ -737,6 +790,7 @@ class Database:
         regenerate_seeds: bool = True,
         kdf_config: KdfConfig | None = None,
         cipher: Cipher | None = None,
+        yubikey_slot: int | None = None,
     ) -> bytes:
         """Serialize the database to KDBX4 format.
 
@@ -758,17 +812,23 @@ class Database:
                 - Cipher.CHACHA20 (modern, faster in software)
                 - Cipher.TWOFISH256_CBC (requires oxifish package)
                 If not specified, preserves existing cipher.
+            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
+                If provided, the (new) master_seed is used as challenge and the
+                20-byte HMAC-SHA1 response is incorporated into key derivation.
+                Requires yubikey-manager package: pip install kdbxtool[yubikey]
 
         Returns:
             KDBX4 file contents as bytes
 
         Raises:
-            ValueError: If no credentials are set
+            MissingCredentialsError: If no credentials are set
+            YubiKeyError: If YubiKey operation fails
         """
-        # Need either credentials or a transformed key
+        # Need either credentials, a transformed key, or YubiKey
         has_credentials = self._password is not None or self._keyfile_data is not None
         has_transformed_key = self._transformed_key is not None
-        if not has_credentials and not has_transformed_key:
+        has_yubikey = yubikey_slot is not None
+        if not has_credentials and not has_transformed_key and not has_yubikey:
             raise MissingCredentialsError()
 
         if self._header is None:
@@ -798,6 +858,17 @@ class Database:
             # Cached transformed_key is now invalid (salt changed)
             self._transformed_key = None
 
+        # Get YubiKey response if slot specified (use new master_seed as challenge)
+        yubikey_response: bytes | None = None
+        if yubikey_slot is not None:
+            if not YUBIKEY_AVAILABLE:
+                from .exceptions import YubiKeyNotAvailableError
+
+                raise YubiKeyNotAvailableError()
+            config = YubiKeyConfig(slot=yubikey_slot)
+            response = compute_challenge_response(self._header.master_seed, config)
+            yubikey_response = response.data
+
         # Sync binaries to inner header (preserve protection flags where possible)
         existing_binaries = self._inner_header.binaries
         new_binaries: dict[int, tuple[bool, bytes]] = {}
@@ -823,6 +894,7 @@ class Database:
             password=self._password,
             keyfile_data=self._keyfile_data,
             transformed_key=self._transformed_key,
+            yubikey_response=yubikey_response,
         )
 
     def set_credentials(

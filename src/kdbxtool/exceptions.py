@@ -17,7 +17,13 @@ Exception Hierarchy:
     │   └── TwofishNotAvailableError
     ├── CredentialError
     │   ├── InvalidPasswordError
-    │   └── InvalidKeyFileError
+    │   ├── InvalidKeyFileError
+    │   ├── MissingCredentialsError
+    │   └── YubiKeyError
+    │       ├── YubiKeyNotFoundError
+    │       ├── YubiKeySlotError
+    │       ├── YubiKeyTimeoutError
+    │       └── YubiKeyNotAvailableError
     └── DatabaseError
         ├── EntryNotFoundError
         └── GroupNotFoundError
@@ -189,6 +195,69 @@ class MissingCredentialsError(CredentialError):
 
     def __init__(self) -> None:
         super().__init__("At least one credential (password or keyfile) is required")
+
+
+# --- YubiKey Errors ---
+
+
+class YubiKeyError(CredentialError):
+    """Error communicating with YubiKey.
+
+    Base class for YubiKey-related errors. These occur during
+    challenge-response authentication with a hardware YubiKey.
+    """
+
+
+class YubiKeyNotFoundError(YubiKeyError):
+    """No YubiKey detected.
+
+    No YubiKey device was found connected to the system.
+    Ensure the YubiKey is properly inserted.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("No YubiKey device found. Ensure it is connected.")
+
+
+class YubiKeySlotError(YubiKeyError):
+    """YubiKey slot not configured for HMAC-SHA1.
+
+    The specified slot on the YubiKey is not configured for
+    HMAC-SHA1 challenge-response authentication.
+    """
+
+    def __init__(self, slot: int) -> None:
+        self.slot = slot
+        super().__init__(f"YubiKey slot {slot} is not configured for HMAC-SHA1 challenge-response")
+
+
+class YubiKeyTimeoutError(YubiKeyError):
+    """YubiKey operation timed out.
+
+    The YubiKey operation timed out, typically because touch
+    was required but not received within the timeout period.
+    """
+
+    def __init__(self, timeout_seconds: float = 15.0) -> None:
+        self.timeout_seconds = timeout_seconds
+        super().__init__(
+            f"YubiKey operation timed out after {timeout_seconds}s. "
+            "Touch may be required - try again and press the YubiKey button."
+        )
+
+
+class YubiKeyNotAvailableError(YubiKeyError):
+    """YubiKey support requested but yubikey-manager not installed.
+
+    The yubikey-manager package is required for YubiKey challenge-response
+    authentication. Install it with: pip install kdbxtool[yubikey]
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "YubiKey support requires the yubikey-manager package. "
+            "Install with: pip install kdbxtool[yubikey]"
+        )
 
 
 # --- Database Errors ---

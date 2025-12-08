@@ -4,6 +4,7 @@ This module contains all security-sensitive code including:
 - Secure memory handling (SecureBytes)
 - Cryptographic operations
 - Key derivation functions
+- YubiKey challenge-response support
 
 All code in this module should be audited carefully.
 """
@@ -28,6 +29,15 @@ from .kdf import (
     derive_key_argon2,
 )
 from .memory import SecureBytes
+from .yubikey import (
+    HMAC_SHA1_RESPONSE_SIZE,
+    YUBIKEY_AVAILABLE,
+    YubiKeyConfig,
+    check_slot_configured,
+    compute_challenge_response,
+    is_yubikey_available,
+    list_yubikeys,
+)
 
 __all__ = [
     # Memory
@@ -49,4 +59,12 @@ __all__ = [
     "derive_composite_key",
     "derive_key_aes_kdf",
     "derive_key_argon2",
+    # YubiKey
+    "HMAC_SHA1_RESPONSE_SIZE",
+    "YUBIKEY_AVAILABLE",
+    "YubiKeyConfig",
+    "check_slot_configured",
+    "compute_challenge_response",
+    "is_yubikey_available",
+    "list_yubikeys",
 ]

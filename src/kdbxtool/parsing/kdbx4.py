@@ -472,6 +472,15 @@ class Kdbx4Writer:
                 variant=header.kdf_type,
             )
             return derive_key_argon2(composite_key.data, config)
+        elif header.kdf_type == KdfType.AES_KDF:
+            if header.aes_kdf_rounds is None:
+                raise KdfError("Missing AES-KDF rounds in header")
+
+            config = AesKdfConfig(
+                rounds=header.aes_kdf_rounds,
+                salt=header.kdf_salt,
+            )
+            return derive_key_aes_kdf(composite_key.data, config)
         else:
             raise KdfError(f"Unsupported KDF for writing: {header.kdf_type}")
 

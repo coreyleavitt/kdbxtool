@@ -91,7 +91,8 @@ class TestArgon2Config:
         assert config.iterations >= ARGON2_MIN_ITERATIONS
         assert config.parallelism >= ARGON2_MIN_PARALLELISM
         assert len(config.salt) == 32
-        assert config.variant == KdfType.ARGON2ID
+        # Default is Argon2d - better GPU resistance for local password databases
+        assert config.variant == KdfType.ARGON2D
 
     def test_default_config_with_salt(self) -> None:
         """Test default configuration with provided salt."""

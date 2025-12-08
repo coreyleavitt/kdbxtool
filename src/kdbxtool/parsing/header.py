@@ -275,6 +275,7 @@ class KdbxHeader:
         argon2_memory: int | None = None
         argon2_iterations: int | None = None
         argon2_parallelism: int | None = None
+        aes_kdf_rounds: int | None = None
 
         if kdf_type in (KdfType.ARGON2ID, KdfType.ARGON2D):
             # Argon2 parameters (must be ints)
@@ -292,6 +293,14 @@ class KdbxHeader:
             argon2_memory = memory // 1024  # Convert bytes to KiB
             argon2_iterations = iterations
             argon2_parallelism = parallelism
+        elif kdf_type == KdfType.AES_KDF:
+            # AES-KDF parameters
+            rounds = kdf_params.get("R")
+
+            if not isinstance(rounds, int):
+                raise KdfError("Missing or invalid AES-KDF rounds parameter")
+
+            aes_kdf_rounds = rounds
 
         return (
             cls(
@@ -305,6 +314,7 @@ class KdbxHeader:
                 argon2_memory_kib=argon2_memory,
                 argon2_iterations=argon2_iterations,
                 argon2_parallelism=argon2_parallelism,
+                aes_kdf_rounds=aes_kdf_rounds,
                 raw_header=raw_header,
             ),
             offset,
@@ -517,6 +527,12 @@ class KdbxHeader:
             add_entry(0x04, "P", struct.pack("<I", self.argon2_parallelism))
             # Version (UInt32) - Argon2 version 0x13
             add_entry(0x04, "V", struct.pack("<I", 0x13))
+        elif self.kdf_type == KdfType.AES_KDF:
+            if self.aes_kdf_rounds is None:
+                raise KdfError("Missing AES-KDF rounds")
+
+            # Rounds (UInt64)
+            add_entry(0x05, "R", struct.pack("<Q", self.aes_kdf_rounds))
 
         # End marker
         ctx.write_u8(0x00)

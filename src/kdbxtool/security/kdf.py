@@ -126,21 +126,31 @@ class Argon2Config:
             raise KdfError("Weak Argon2 parameters: " + "; ".join(issues))
 
     @classmethod
-    def default(cls, salt: bytes | None = None) -> Argon2Config:
+    def default(
+        cls,
+        salt: bytes | None = None,
+        variant: KdfType = KdfType.ARGON2D,
+    ) -> Argon2Config:
         """Create configuration with secure defaults.
 
         Alias for standard(). Provides balanced security and performance.
 
         Args:
             salt: Optional salt (32 random bytes generated if not provided)
+            variant: Argon2 variant (ARGON2D or ARGON2ID). Default is ARGON2D
+                which provides better GPU resistance for local password databases.
 
         Returns:
             Argon2Config with recommended security parameters
         """
-        return cls.standard(salt=salt)
+        return cls.standard(salt=salt, variant=variant)
 
     @classmethod
-    def standard(cls, salt: bytes | None = None) -> Argon2Config:
+    def standard(
+        cls,
+        salt: bytes | None = None,
+        variant: KdfType = KdfType.ARGON2D,
+    ) -> Argon2Config:
         """Create configuration with balanced security/performance.
 
         Suitable for most use cases. Provides good security with
@@ -150,6 +160,9 @@ class Argon2Config:
 
         Args:
             salt: Optional salt (32 random bytes generated if not provided)
+            variant: Argon2 variant (ARGON2D or ARGON2ID). Default is ARGON2D
+                which provides better GPU resistance for local password databases.
+                Use ARGON2ID if timing attack resistance is needed.
 
         Returns:
             Argon2Config with standard security parameters
@@ -163,11 +176,15 @@ class Argon2Config:
             iterations=3,
             parallelism=4,
             salt=salt,
-            variant=KdfType.ARGON2ID,
+            variant=variant,
         )
 
     @classmethod
-    def high_security(cls, salt: bytes | None = None) -> Argon2Config:
+    def high_security(
+        cls,
+        salt: bytes | None = None,
+        variant: KdfType = KdfType.ARGON2D,
+    ) -> Argon2Config:
         """Create configuration for high-security applications.
 
         Use for sensitive data where longer unlock times are acceptable.
@@ -177,6 +194,8 @@ class Argon2Config:
 
         Args:
             salt: Optional salt (32 random bytes generated if not provided)
+            variant: Argon2 variant (ARGON2D or ARGON2ID). Default is ARGON2D
+                which provides better GPU resistance for local password databases.
 
         Returns:
             Argon2Config with high security parameters
@@ -190,11 +209,15 @@ class Argon2Config:
             iterations=10,
             parallelism=4,
             salt=salt,
-            variant=KdfType.ARGON2ID,
+            variant=variant,
         )
 
     @classmethod
-    def fast(cls, salt: bytes | None = None) -> Argon2Config:
+    def fast(
+        cls,
+        salt: bytes | None = None,
+        variant: KdfType = KdfType.ARGON2D,
+    ) -> Argon2Config:
         """Create configuration for fast operations (testing only).
 
         WARNING: This provides minimal security and should only be used
@@ -204,6 +227,7 @@ class Argon2Config:
 
         Args:
             salt: Optional salt (32 random bytes generated if not provided)
+            variant: Argon2 variant (ARGON2D or ARGON2ID). Default is ARGON2D.
 
         Returns:
             Argon2Config with minimal parameters
@@ -217,19 +241,20 @@ class Argon2Config:
             iterations=3,
             parallelism=2,
             salt=salt,
-            variant=KdfType.ARGON2ID,
+            variant=variant,
         )
 
 
 @dataclass(frozen=True, slots=True)
 class AesKdfConfig:
-    """Configuration for legacy AES-KDF (KDBX3).
+    """Configuration for AES-KDF key derivation.
 
-    Note: AES-KDF is only supported for reading KDBX3 databases.
-    New databases should use Argon2id.
+    AES-KDF is supported in both KDBX3 and KDBX4. While Argon2 is generally
+    recommended for new databases, AES-KDF may be preferred for compatibility
+    with older KeePass clients or on systems where Argon2 is slow.
 
     Attributes:
-        rounds: Number of AES encryption rounds
+        rounds: Number of AES encryption rounds (higher = slower but more secure)
         salt: 32-byte salt
     """
 
@@ -242,6 +267,63 @@ class AesKdfConfig:
             raise KdfError("AES-KDF salt must be exactly 32 bytes")
         if self.rounds < 1:
             raise KdfError("AES-KDF rounds must be at least 1")
+
+    @classmethod
+    def standard(cls, salt: bytes | None = None) -> AesKdfConfig:
+        """Create configuration with balanced security/performance.
+
+        Uses 600,000 rounds which provides reasonable security while
+        keeping unlock times acceptable on most hardware.
+
+        Args:
+            salt: Optional salt (32 random bytes generated if not provided)
+
+        Returns:
+            AesKdfConfig with standard parameters
+        """
+        import os
+
+        if salt is None:
+            salt = os.urandom(32)
+        return cls(rounds=600_000, salt=salt)
+
+    @classmethod
+    def high_security(cls, salt: bytes | None = None) -> AesKdfConfig:
+        """Create configuration for high-security applications.
+
+        Uses 6,000,000 rounds for stronger protection at the cost of
+        longer unlock times.
+
+        Args:
+            salt: Optional salt (32 random bytes generated if not provided)
+
+        Returns:
+            AesKdfConfig with high security parameters
+        """
+        import os
+
+        if salt is None:
+            salt = os.urandom(32)
+        return cls(rounds=6_000_000, salt=salt)
+
+    @classmethod
+    def fast(cls, salt: bytes | None = None) -> AesKdfConfig:
+        """Create configuration for fast operations (testing only).
+
+        WARNING: Uses only 60,000 rounds which provides minimal security.
+        Only use for testing or development.
+
+        Args:
+            salt: Optional salt (32 random bytes generated if not provided)
+
+        Returns:
+            AesKdfConfig with minimal parameters
+        """
+        import os
+
+        if salt is None:
+            salt = os.urandom(32)
+        return cls(rounds=60_000, salt=salt)
 
 
 def derive_key_argon2(

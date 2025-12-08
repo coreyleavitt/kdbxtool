@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from kdbxtool import Argon2Config, Database
+from kdbxtool import AesKdfConfig, Argon2Config, Database, KdfType
 
 
 class TestArgon2ConfigPresets:
@@ -20,6 +20,7 @@ class TestArgon2ConfigPresets:
         assert config.iterations == 3
         assert config.parallelism == 4
         assert len(config.salt) == 32
+        assert config.variant == KdfType.ARGON2D  # Default is Argon2d
 
     def test_high_security_preset(self) -> None:
         """Test high_security() preset has stronger values."""
@@ -29,6 +30,7 @@ class TestArgon2ConfigPresets:
         assert config.iterations == 10
         assert config.parallelism == 4
         assert len(config.salt) == 32
+        assert config.variant == KdfType.ARGON2D
 
     def test_fast_preset(self) -> None:
         """Test fast() preset has minimal values."""
@@ -59,6 +61,57 @@ class TestArgon2ConfigPresets:
         """Test that each preset call generates a unique salt."""
         config1 = Argon2Config.standard()
         config2 = Argon2Config.standard()
+
+        assert config1.salt != config2.salt
+
+    def test_argon2id_variant(self) -> None:
+        """Test that Argon2id variant can be specified."""
+        config = Argon2Config.standard(variant=KdfType.ARGON2ID)
+
+        assert config.variant == KdfType.ARGON2ID
+
+    def test_argon2d_is_default(self) -> None:
+        """Test that Argon2d is the default variant."""
+        config = Argon2Config.standard()
+
+        assert config.variant == KdfType.ARGON2D
+
+
+class TestAesKdfConfigPresets:
+    """Tests for AesKdfConfig preset factory methods."""
+
+    def test_standard_preset(self) -> None:
+        """Test standard() preset has expected values."""
+        config = AesKdfConfig.standard()
+
+        assert config.rounds == 600_000
+        assert len(config.salt) == 32
+
+    def test_high_security_preset(self) -> None:
+        """Test high_security() preset has stronger values."""
+        config = AesKdfConfig.high_security()
+
+        assert config.rounds == 6_000_000
+        assert len(config.salt) == 32
+
+    def test_fast_preset(self) -> None:
+        """Test fast() preset has minimal values."""
+        config = AesKdfConfig.fast()
+
+        assert config.rounds == 60_000
+        assert len(config.salt) == 32
+
+    def test_custom_salt(self) -> None:
+        """Test that custom salt can be provided."""
+        custom_salt = b"y" * 32
+        config = AesKdfConfig.standard(salt=custom_salt)
+
+        assert config.salt == custom_salt
+
+    def test_presets_generate_unique_salts(self) -> None:
+        """Test that each preset call generates a unique salt."""
+        config1 = AesKdfConfig.standard()
+        config2 = AesKdfConfig.standard()
 
         assert config1.salt != config2.salt
 
@@ -162,3 +215,66 @@ class TestKdfConfigOnUpgrade:
             assert db2.root_group is not None
         finally:
             temp_path.unlink(missing_ok=True)
+
+    def test_kdbx3_upgrade_with_aes_kdf(self) -> None:
+        """Test KDBX3 upgrade with AES-KDF config."""
+        test_file = Path(__file__).parent / "fixtures" / "test3.kdbx"
+        test_key = Path(__file__).parent / "fixtures" / "test3.key"
+
+        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
+            temp_path = Path(f.name)
+
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                db = Database.open(test_file, password="password", keyfile=test_key)
+
+            # Upgrade with AES-KDF (fast for testing)
+            db.save(
+                filepath=temp_path,
+                allow_upgrade=True,
+                kdf_config=AesKdfConfig.fast(),
+            )
+
+            # Verify the file was saved and can be reopened
+            db2 = Database.open(temp_path, password="password", keyfile=test_key)
+            assert db2.root_group is not None
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    def test_save_with_aes_kdf_config(self) -> None:
+        """Test saving new database with AES-KDF config."""
+        db = Database.create(password="test")
+        db.root_group.create_entry(title="Test")
+
+        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
+            filepath = Path(f.name)
+
+        try:
+            db.save(filepath=filepath, kdf_config=AesKdfConfig.fast())
+
+            # Verify we can reopen
+            db2 = Database.open(filepath, password="test")
+            assert db2.find_entries(title="Test", first=True) is not None
+        finally:
+            filepath.unlink(missing_ok=True)
+
+    def test_save_with_argon2id_variant(self) -> None:
+        """Test saving with Argon2id variant."""
+        db = Database.create(password="test")
+        db.root_group.create_entry(title="Test")
+
+        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
+            filepath = Path(f.name)
+
+        try:
+            db.save(
+                filepath=filepath,
+                kdf_config=Argon2Config.fast(variant=KdfType.ARGON2ID),
+            )
+
+            # Verify we can reopen
+            db2 = Database.open(filepath, password="test")
+            assert db2.find_entries(title="Test", first=True) is not None
+        finally:
+            filepath.unlink(missing_ok=True)

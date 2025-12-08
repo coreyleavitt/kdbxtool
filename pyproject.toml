@@ -69,3 +69,6 @@ select = ["E", "F", "W", "I", "UP", "S", "B", "C4", "PIE", "SIM"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --cov=kdbxtool --cov-report=term-missing"
+markers = [
+    "hardware: tests requiring physical hardware (YubiKey)",
+]

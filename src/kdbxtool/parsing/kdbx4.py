@@ -144,7 +144,8 @@ class Kdbx4Reader:
             # Use precomputed transformed key (skips expensive KDF)
             master_key_bytes = transformed_key
         else:
-            # Derive composite key from credentials (including YubiKey response if provided)
+            # Derive composite key from credentials
+            # KeePassXC: YubiKey response is incorporated into composite key
             composite_key = derive_composite_key(
                 password=password,
                 keyfile_data=keyfile_data,
@@ -401,7 +402,8 @@ class Kdbx4Writer:
             # Use precomputed transformed key (skips expensive KDF)
             master_key_bytes = transformed_key
         else:
-            # Derive composite key from credentials (including YubiKey response if provided)
+            # Derive composite key from credentials
+            # KeePassXC: YubiKey response is incorporated into composite key
             composite_key = derive_composite_key(
                 password=password,
                 keyfile_data=keyfile_data,

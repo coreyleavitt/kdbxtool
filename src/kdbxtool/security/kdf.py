@@ -473,11 +473,14 @@ def derive_composite_key(
 ) -> SecureBytes:
     """Create composite key from password, keyfile, and/or YubiKey response.
 
-    The composite key is SHA-256(password_hash || keyfile_key || yubikey_response).
-    This follows the KeePassXC approach for challenge-response integration.
+    The composite key is SHA-256(password_hash || keyfile_key || challenge_result).
+
+    KeePassXC-compatible YubiKey handling:
+    - The YubiKey response (20 bytes HMAC-SHA1) is SHA-256 hashed
+    - This hash is appended to the other key components before final SHA-256
+    - The challenge used to obtain the response should be the KDF salt
 
     The keyfile_key is processed according to KeePass keyfile format rules.
-    The YubiKey response (20 bytes) is incorporated directly if provided.
 
     Args:
         password: Optional password string
@@ -514,8 +517,10 @@ def derive_composite_key(
             parts.append(key_bytes)
 
         if yubikey_response is not None:
-            # YubiKey response is incorporated directly (20 bytes)
-            parts.append(yubikey_response)
+            # KeePassXC: challenge() returns SHA256 of all CR keys' rawKey
+            # rawKey for ChallengeResponseKey is the raw YubiKey response
+            challenge_result = hashlib.sha256(yubikey_response).digest()
+            parts.append(challenge_result)
 
         composite = hashlib.sha256(b"".join(parts)).digest()
         return SecureBytes(composite)

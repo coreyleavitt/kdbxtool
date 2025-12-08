@@ -4,9 +4,9 @@ This module provides hardware-backed key derivation using YubiKey devices
 configured with HMAC-SHA1 challenge-response in slot 1 or 2.
 
 The implementation follows the KeePassXC approach:
-1. Database's master_seed (32 bytes) is used as the challenge
+1. Database's KDF salt (32 bytes) is used as the challenge
 2. YubiKey computes HMAC-SHA1(challenge, hardware_secret)
-3. 20-byte response is incorporated into composite key derivation
+3. 20-byte response is SHA-256 hashed and incorporated into composite key
 
 This provides hardware-backed security: the database cannot be decrypted
 without physical access to the configured YubiKey, even if the password
@@ -43,7 +43,7 @@ from .memory import SecureBytes
 # Optional yubikey-manager support
 try:
     from ykman.device import list_all_devices  # type: ignore[import-not-found]
-    from yubikit.core.smartcard import SmartCardConnection  # type: ignore[import-not-found]
+    from yubikit.core.otp import OtpConnection  # type: ignore[import-not-found]
     from yubikit.yubiotp import (  # type: ignore[import-not-found]
         SLOT,
         YubiOtpSession,
@@ -112,9 +112,12 @@ def list_yubikeys() -> list[dict[str, str | int]]:
 
     devices = []
     for _device, info in list_all_devices():
-        device_info: dict[str, str | int] = {
-            "name": info.device_type.name if info.device_type else "Unknown",
-        }
+        # Build a descriptive name from version and form factor
+        version_str = f"{info.version.major}.{info.version.minor}.{info.version.patch}"
+        form_factor = str(info.form_factor) if info.form_factor else "Unknown"
+        name = f"YubiKey {version_str} {form_factor}"
+
+        device_info: dict[str, str | int] = {"name": name}
         if info.serial:
             device_info["serial"] = info.serial
         devices.append(device_info)
@@ -128,14 +131,13 @@ def compute_challenge_response(
 ) -> SecureBytes:
     """Send challenge to YubiKey and return HMAC-SHA1 response.
 
-    This function sends the challenge (typically the database's master_seed)
-    to the YubiKey and returns the HMAC-SHA1 response. The response is
-    computed by the YubiKey hardware using a secret that never leaves the
-    device.
+    This function sends the challenge (the database's KDF salt) to the
+    YubiKey and returns the HMAC-SHA1 response. The response is computed
+    by the YubiKey hardware using a secret that never leaves the device.
 
     Args:
-        challenge: Challenge bytes (typically 32-byte master_seed from
-            KDBX header). Must be at least 1 byte.
+        challenge: Challenge bytes (32-byte KDF salt from KDBX header).
+            Must be at least 1 byte.
         config: Optional YubiKey configuration. If not provided, uses
             slot 2 with 15 second timeout.
 
@@ -188,7 +190,7 @@ def compute_challenge_response(
 
     try:
         # Connect via smartcard interface for challenge-response
-        connection = device.open_connection(SmartCardConnection)
+        connection = device.open_connection(OtpConnection)
         try:
             session = YubiOtpSession(connection)
 
@@ -254,7 +256,7 @@ def check_slot_configured(slot: int = 2, serial: int | None = None) -> bool:
         device, _info = devices[0]
 
     try:
-        connection = device.open_connection(SmartCardConnection)
+        connection = device.open_connection(OtpConnection)
         try:
             session = YubiOtpSession(connection)
             config = session.get_config_state()

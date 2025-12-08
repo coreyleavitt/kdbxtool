@@ -343,7 +343,7 @@ class Database:
             password: Database password
             keyfile: Path to keyfile (optional)
             yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
-                If provided, the database's master_seed is used as challenge and
+                If provided, the database's KDF salt is used as challenge and
                 the 20-byte HMAC-SHA1 response is incorporated into key derivation.
                 Requires yubikey-manager package: pip install kdbxtool[yubikey]
             yubikey_serial: Serial number of specific YubiKey to use when multiple
@@ -402,7 +402,7 @@ class Database:
             filepath: Original file path (for save)
             transformed_key: Precomputed transformed key (skips KDF, faster opens)
             yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
-                If provided, the database's master_seed is used as challenge and
+                If provided, the database's KDF salt is used as challenge and
                 the 20-byte HMAC-SHA1 response is incorporated into key derivation.
                 Requires yubikey-manager package: pip install kdbxtool[yubikey]
             yubikey_serial: Serial number of specific YubiKey to use when multiple
@@ -417,7 +417,8 @@ class Database:
         # Detect version from header (parse just enough to get version)
         header, _ = KdbxHeader.parse(data)
 
-        # Get YubiKey response if slot specified (use master_seed as challenge)
+        # Get YubiKey response if slot specified
+        # KeePassXC uses the KDF salt as the challenge, not master_seed
         yubikey_response: bytes | None = None
         if yubikey_slot is not None:
             if not yubikey_module.YUBIKEY_AVAILABLE:
@@ -425,7 +426,7 @@ class Database:
 
                 raise YubiKeyNotAvailableError()
             config = YubiKeyConfig(slot=yubikey_slot, serial=yubikey_serial)
-            response = compute_challenge_response(header.master_seed, config)
+            response = compute_challenge_response(header.kdf_salt, config)
             yubikey_response = response.data
 
         # Decrypt the file using appropriate reader
@@ -659,7 +660,7 @@ class Database:
                 If not specified, preserves existing cipher.
             yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
                 If provided (or if database was opened with yubikey_slot), the new
-                master_seed is used as challenge and the response is incorporated
+                KDF salt is used as challenge and the response is incorporated
                 into key derivation. Requires yubikey-manager package.
             yubikey_serial: Serial number of specific YubiKey to use when multiple
                 devices are connected. Use list_yubikeys() to discover serials.
@@ -831,7 +832,7 @@ class Database:
                 - Cipher.TWOFISH256_CBC (requires oxifish package)
                 If not specified, preserves existing cipher.
             yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
-                If provided, the (new) master_seed is used as challenge and the
+                If provided, the (new) KDF salt is used as challenge and the
                 20-byte HMAC-SHA1 response is incorporated into key derivation.
                 Requires yubikey-manager package: pip install kdbxtool[yubikey]
             yubikey_serial: Serial number of specific YubiKey to use when multiple
@@ -878,7 +879,8 @@ class Database:
             # Cached transformed_key is now invalid (salt changed)
             self._transformed_key = None
 
-        # Get YubiKey response if slot specified (use new master_seed as challenge)
+        # Get YubiKey response if slot specified
+        # KeePassXC uses the KDF salt as the challenge, not master_seed
         yubikey_response: bytes | None = None
         if yubikey_slot is not None:
             if not yubikey_module.YUBIKEY_AVAILABLE:
@@ -886,7 +888,7 @@ class Database:
 
                 raise YubiKeyNotAvailableError()
             config = YubiKeyConfig(slot=yubikey_slot, serial=yubikey_serial)
-            response = compute_challenge_response(self._header.master_seed, config)
+            response = compute_challenge_response(self._header.kdf_salt, config)
             yubikey_response = response.data
 
         # Sync binaries to inner header (preserve protection flags where possible)

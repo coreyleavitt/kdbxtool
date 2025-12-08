@@ -153,8 +153,7 @@ class KdbxHeader:
             magic = ctx.read(8, "magic")
             if magic != KDBX_MAGIC:
                 raise InvalidSignatureError(
-                    f"Invalid KDBX signature: {magic.hex()} "
-                    f"(expected {KDBX_MAGIC.hex()})"
+                    f"Invalid KDBX signature: {magic.hex()} (expected {KDBX_MAGIC.hex()})"
                 )
 
         with ctx.scope("version"):
@@ -201,9 +200,7 @@ class KdbxHeader:
         # Compression (required)
         if HeaderFieldType.COMPRESSION_FLAGS not in header_fields:
             raise CorruptedDataError("Missing compression flags in header")
-        compression_val = struct.unpack(
-            "<I", header_fields[HeaderFieldType.COMPRESSION_FLAGS]
-        )[0]
+        compression_val = struct.unpack("<I", header_fields[HeaderFieldType.COMPRESSION_FLAGS])[0]
         compression = CompressionType(compression_val)
 
         # Master seed (required, 32 bytes)
@@ -343,9 +340,7 @@ class KdbxHeader:
         # Transform rounds
         if HeaderFieldType.TRANSFORM_ROUNDS not in fields:
             raise CorruptedDataError("Missing transform rounds in KDBX3 header")
-        aes_kdf_rounds = struct.unpack(
-            "<Q", fields[HeaderFieldType.TRANSFORM_ROUNDS]
-        )[0]
+        aes_kdf_rounds = struct.unpack("<Q", fields[HeaderFieldType.TRANSFORM_ROUNDS])[0]
 
         # Stream start bytes (for verification)
         stream_start = fields.get(HeaderFieldType.STREAM_START_BYTES)
@@ -356,9 +351,7 @@ class KdbxHeader:
         # Protected stream ID (in outer header for KDBX3)
         stream_id = None
         if HeaderFieldType.INNER_RANDOM_STREAM_ID in fields:
-            stream_id = struct.unpack(
-                "<I", fields[HeaderFieldType.INNER_RANDOM_STREAM_ID]
-            )[0]
+            stream_id = struct.unpack("<I", fields[HeaderFieldType.INNER_RANDOM_STREAM_ID])[0]
 
         return (
             cls(
@@ -406,9 +399,7 @@ class KdbxHeader:
         with ctx.scope("variant_dict"):
             version = ctx.read_u16("version")
             if version != 0x0100:
-                raise CorruptedDataError(
-                    f"Unsupported VariantDictionary version: {version:#x}"
-                )
+                raise CorruptedDataError(f"Unsupported VariantDictionary version: {version:#x}")
 
             result: dict[str, bytes | int | bool | str] = {}
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import hashlib
 import os
 import uuid as uuid_module
@@ -88,7 +89,7 @@ class ProtectedStreamCipher:
         elif self._stream_id == PROTECTED_STREAM_SALSA20:
             # Salsa20: SHA-256 of key, fixed nonce
             key = hashlib.sha256(self._stream_key).digest()
-            nonce = b'\xE8\x30\x09\x4B\x97\x20\x5D\x2A'
+            nonce = b"\xe8\x30\x09\x4b\x97\x20\x5d\x2a"
             return Salsa20.new(key=key, nonce=nonce)
         else:
             raise UnknownCipherError(self._stream_id.to_bytes(4, "little"))
@@ -417,9 +418,7 @@ class Database:
             )
 
         # Parse XML into models (with protected value decryption)
-        root_group, settings, binaries = cls._parse_xml(
-            payload.xml_data, payload.inner_header
-        )
+        root_group, settings, binaries = cls._parse_xml(payload.xml_data, payload.inner_header)
 
         db = cls(
             root_group=root_group,
@@ -625,7 +624,9 @@ class Database:
         if was_kdbx3 and not save_to_new_file and not allow_upgrade:
             raise Kdbx3UpgradeRequired()
 
-        data = self.to_bytes(regenerate_seeds=regenerate_seeds, kdf_config=kdf_config, cipher=cipher)
+        data = self.to_bytes(
+            regenerate_seeds=regenerate_seeds, kdf_config=kdf_config, cipher=cipher
+        )
         self._filepath.write_bytes(data)
 
         # After KDBX3 upgrade, reload to get proper KDBX4 state (including transformed_key)
@@ -645,9 +646,7 @@ class Database:
             MissingCredentialsError: If no credentials are stored
         """
         if self._filepath is None:
-            raise DatabaseError(
-                "Cannot reload: database wasn't opened from a file"
-            )
+            raise DatabaseError("Cannot reload: database wasn't opened from a file")
 
         if self._password is None and self._keyfile_data is None:
             raise MissingCredentialsError()
@@ -1140,9 +1139,7 @@ class Database:
         if regex and filename is not None:
             pattern = re_module.compile(filename)
 
-        for entry in self._root_group.iter_entries(
-            recursive=recursive, history=history
-        ):
+        for entry in self._root_group.iter_entries(recursive=recursive, history=history):
             for binary_ref in entry.binaries:
                 # Check ID filter
                 if id is not None and binary_ref.ref != id:
@@ -1560,9 +1557,7 @@ class Database:
                 return self._binaries.get(binary_ref.ref)
         return None
 
-    def add_attachment(
-        self, entry: Entry, name: str, data: bytes, protected: bool = True
-    ) -> None:
+    def add_attachment(self, entry: Entry, name: str, data: bytes, protected: bool = True) -> None:
         """Add an attachment to an entry.
 
         Args:
@@ -1622,9 +1617,7 @@ class Database:
         icon = self._settings.custom_icons.get(uuid)
         return icon.data if icon else None
 
-    def add_custom_icon(
-        self, data: bytes, name: str | None = None
-    ) -> uuid_module.UUID:
+    def add_custom_icon(self, data: bytes, name: str | None = None) -> uuid_module.UUID:
         """Add a custom icon to the database.
 
         Args:
@@ -1673,11 +1666,7 @@ class Database:
         Raises:
             ValueError: If multiple icons have the same name
         """
-        matches = [
-            icon.uuid
-            for icon in self._settings.custom_icons.values()
-            if icon.name == name
-        ]
+        matches = [icon.uuid for icon in self._settings.custom_icons.values() if icon.name == name]
         if len(matches) == 0:
             return None
         if len(matches) > 1:
@@ -1788,9 +1777,7 @@ class Database:
             import contextlib
 
             with contextlib.suppress(binascii.Error, ValueError):
-                settings.recycle_bin_uuid = uuid_module.UUID(
-                    bytes=base64.b64decode(rb_uuid)
-                )
+                settings.recycle_bin_uuid = uuid_module.UUID(bytes=base64.b64decode(rb_uuid))
 
         # Parse custom icons
         custom_icons_elem = meta_elem.find("CustomIcons")
@@ -1798,7 +1785,12 @@ class Database:
             for icon_elem in custom_icons_elem.findall("Icon"):
                 icon_uuid_elem = icon_elem.find("UUID")
                 icon_data_elem = icon_elem.find("Data")
-                if icon_uuid_elem is not None and icon_uuid_elem.text and icon_data_elem is not None and icon_data_elem.text:
+                if (
+                    icon_uuid_elem is not None
+                    and icon_uuid_elem.text
+                    and icon_data_elem is not None
+                    and icon_data_elem.text
+                ):
                     try:
                         icon_uuid = uuid_module.UUID(bytes=base64.b64decode(icon_uuid_elem.text))
                         icon_data = base64.b64decode(icon_data_elem.text)
@@ -1849,12 +1841,10 @@ class Database:
         # Custom icon UUID
         custom_icon_elem = elem.find("CustomIconUUID")
         if custom_icon_elem is not None and custom_icon_elem.text:
-            try:
+            with contextlib.suppress(binascii.Error, ValueError):
                 group.custom_icon_uuid = uuid_module.UUID(
                     bytes=base64.b64decode(custom_icon_elem.text)
                 )
-            except (binascii.Error, ValueError):
-                pass
 
         # Times
         group.times = cls._parse_times(elem.find("Times"))
@@ -1889,12 +1879,10 @@ class Database:
         # Custom icon UUID
         custom_icon_elem = elem.find("CustomIconUUID")
         if custom_icon_elem is not None and custom_icon_elem.text:
-            try:
+            with contextlib.suppress(binascii.Error, ValueError):
                 entry.custom_icon_uuid = uuid_module.UUID(
                     bytes=base64.b64decode(custom_icon_elem.text)
                 )
-            except (binascii.Error, ValueError):
-                pass
 
         # Tags
         tags_elem = elem.find("Tags")
@@ -2003,6 +1991,7 @@ class Database:
                 if len(binary) == 8:  # int64 = 8 bytes
                     # KDBX4 stores seconds since 0001-01-01 as int64
                     import struct
+
                     seconds = struct.unpack("<q", binary)[0]
                     # Convert to datetime (epoch is 0001-01-01)
                     base = datetime(1, 1, 1, tzinfo=UTC)
@@ -2100,9 +2089,7 @@ class Database:
             ).decode("ascii")
         else:
             # Empty UUID
-            SubElement(meta, "RecycleBinUUID").text = base64.b64encode(
-                b"\x00" * 16
-            ).decode("ascii")
+            SubElement(meta, "RecycleBinUUID").text = base64.b64encode(b"\x00" * 16).decode("ascii")
 
         SubElement(meta, "HistoryMaxItems").text = str(s.history_max_items)
         SubElement(meta, "HistoryMaxSize").text = str(s.history_max_size)
@@ -2112,12 +2099,10 @@ class Database:
             custom_icons_elem = SubElement(meta, "CustomIcons")
             for icon in s.custom_icons.values():
                 icon_elem = SubElement(custom_icons_elem, "Icon")
-                SubElement(icon_elem, "UUID").text = base64.b64encode(
-                    icon.uuid.bytes
-                ).decode("ascii")
-                SubElement(icon_elem, "Data").text = base64.b64encode(
-                    icon.data
-                ).decode("ascii")
+                SubElement(icon_elem, "UUID").text = base64.b64encode(icon.uuid.bytes).decode(
+                    "ascii"
+                )
+                SubElement(icon_elem, "Data").text = base64.b64encode(icon.data).decode("ascii")
                 if icon.name:
                     SubElement(icon_elem, "Name").text = icon.name
                 if icon.last_modification_time:

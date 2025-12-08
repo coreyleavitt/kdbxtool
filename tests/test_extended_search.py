@@ -362,15 +362,11 @@ class TestFindAttachments:
         entry.binaries.clear()
 
         # Without history
-        attachments_no_history = db.find_attachments(
-            filename="old_file.txt", history=False
-        )
+        attachments_no_history = db.find_attachments(filename="old_file.txt", history=False)
         assert len(attachments_no_history) == 0
 
         # With history
-        attachments_with_history = db.find_attachments(
-            filename="old_file.txt", history=True
-        )
+        attachments_with_history = db.find_attachments(filename="old_file.txt", history=True)
         assert len(attachments_with_history) == 1
 
     def test_attachments_property(self) -> None:
@@ -425,9 +421,7 @@ class TestCombinedSearchParameters:
         )
         entry2.autotype.enabled = False
 
-        entries = db.find_entries(
-            title="Gmail", password="pass123", autotype_enabled=True
-        )
+        entries = db.find_entries(title="Gmail", password="pass123", autotype_enabled=True)
 
         assert len(entries) == 1
         assert entries[0].username == "user@gmail.com"
@@ -452,9 +446,7 @@ class TestSearchRoundtrip:
     def test_extended_search_after_roundtrip(self) -> None:
         """Test that extended search works after save/load."""
         db = Database.create(password="test")
-        entry = db.root_group.create_entry(
-            title="Test", username="user", password="secret"
-        )
+        entry = db.root_group.create_entry(title="Test", username="user", password="secret")
         entry.autotype.sequence = "{TAB}{ENTER}"
         entry.set_custom_property("API_KEY", "key123")
 

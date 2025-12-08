@@ -180,7 +180,9 @@ class TestDatabaseSearch:
         personal = db.root_group.create_subgroup("Personal")
 
         # Create entries
-        db.root_group.create_entry(title="GitHub", username="dev@example.com", url="https://github.com")
+        db.root_group.create_entry(
+            title="GitHub", username="dev@example.com", url="https://github.com"
+        )
         work.create_entry(title="Jira", username="dev@work.com", tags=["work", "tracking"])
         work.create_entry(title="Slack", username="dev@work.com", tags=["work", "chat"])
         personal.create_entry(title="Gmail", username="me@gmail.com", tags=["personal", "email"])
@@ -309,6 +311,7 @@ class TestDatabaseSearch:
     def test_find_entries_regex_invalid_pattern(self) -> None:
         """Test that invalid regex raises error."""
         import re
+
         db = Database.create(password="test")
         db.root_group.create_entry(title="Test")
 

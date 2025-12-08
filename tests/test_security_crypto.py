@@ -191,9 +191,7 @@ class TestCipherContext:
         """12-byte ChaCha20 nonce."""
         return secure_random_bytes(12)
 
-    def test_aes_encrypt_decrypt_roundtrip(
-        self, aes_key: bytes, aes_iv: bytes
-    ) -> None:
+    def test_aes_encrypt_decrypt_roundtrip(self, aes_key: bytes, aes_iv: bytes) -> None:
         """Test AES encryption and decryption roundtrip."""
         # AES-CBC requires block-aligned plaintext (16 bytes)
         plaintext = b"0123456789abcdef" * 4  # 64 bytes
@@ -204,9 +202,7 @@ class TestCipherContext:
         decrypted = ctx2.decrypt(ciphertext)
         assert decrypted == plaintext
 
-    def test_chacha_encrypt_decrypt_roundtrip(
-        self, chacha_key: bytes, chacha_nonce: bytes
-    ) -> None:
+    def test_chacha_encrypt_decrypt_roundtrip(self, chacha_key: bytes, chacha_nonce: bytes) -> None:
         """Test ChaCha20 encryption and decryption roundtrip."""
         plaintext = b"This is a test message of arbitrary length!"
         ctx = CipherContext(Cipher.CHACHA20, chacha_key, chacha_nonce)
@@ -217,9 +213,7 @@ class TestCipherContext:
         decrypted = ctx2.decrypt(ciphertext)
         assert decrypted == plaintext
 
-    def test_chacha_stream_cipher_properties(
-        self, chacha_key: bytes, chacha_nonce: bytes
-    ) -> None:
+    def test_chacha_stream_cipher_properties(self, chacha_key: bytes, chacha_nonce: bytes) -> None:
         """Test ChaCha20 stream cipher produces different output per nonce."""
         plaintext = b"Same plaintext for both"
         ctx1 = CipherContext(Cipher.CHACHA20, chacha_key, chacha_nonce)
@@ -247,18 +241,14 @@ class TestCipherContext:
         with pytest.raises(ValueError, match="requires 12-byte IV"):
             CipherContext(Cipher.CHACHA20, chacha_key, bad_nonce)
 
-    def test_aes_ciphertext_different_from_plaintext(
-        self, aes_key: bytes, aes_iv: bytes
-    ) -> None:
+    def test_aes_ciphertext_different_from_plaintext(self, aes_key: bytes, aes_iv: bytes) -> None:
         """Test that AES ciphertext differs from plaintext."""
         plaintext = b"0123456789abcdef"
         ctx = CipherContext(Cipher.AES256_CBC, aes_key, aes_iv)
         ciphertext = ctx.encrypt(plaintext)
         assert ciphertext != plaintext
 
-    def test_different_keys_produce_different_ciphertext(
-        self, aes_iv: bytes
-    ) -> None:
+    def test_different_keys_produce_different_ciphertext(self, aes_iv: bytes) -> None:
         """Test that different keys produce different ciphertext."""
         plaintext = b"0123456789abcdef"
         key1 = secure_random_bytes(32)

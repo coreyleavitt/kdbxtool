@@ -7,9 +7,10 @@ with good error messages and type safety.
 from __future__ import annotations
 
 import struct
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Iterator
+from typing import cast
 
 from kdbxtool.exceptions import CorruptedDataError
 
@@ -63,15 +64,15 @@ class ParseContext:
 
     def read_u16(self, name: str = "") -> int:
         """Read unsigned 16-bit little-endian integer."""
-        return struct.unpack("<H", self.read(2, name))[0]
+        return cast(int, struct.unpack("<H", self.read(2, name))[0])
 
     def read_u32(self, name: str = "") -> int:
         """Read unsigned 32-bit little-endian integer."""
-        return struct.unpack("<I", self.read(4, name))[0]
+        return cast(int, struct.unpack("<I", self.read(4, name))[0])
 
     def read_u64(self, name: str = "") -> int:
         """Read unsigned 64-bit little-endian integer."""
-        return struct.unpack("<Q", self.read(8, name))[0]
+        return cast(int, struct.unpack("<Q", self.read(8, name))[0])
 
     def read_bytes_prefixed(self, name: str = "") -> bytes:
         """Read length-prefixed bytes (4-byte little-endian length prefix).

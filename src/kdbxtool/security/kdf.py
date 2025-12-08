@@ -109,18 +109,13 @@ class Argon2Config:
         issues = []
         if self.memory_kib < ARGON2_MIN_MEMORY_KIB:
             issues.append(
-                f"Memory {self.memory_kib} KiB is below minimum "
-                f"{ARGON2_MIN_MEMORY_KIB} KiB"
+                f"Memory {self.memory_kib} KiB is below minimum {ARGON2_MIN_MEMORY_KIB} KiB"
             )
         if self.iterations < ARGON2_MIN_ITERATIONS:
-            issues.append(
-                f"Iterations {self.iterations} is below minimum "
-                f"{ARGON2_MIN_ITERATIONS}"
-            )
+            issues.append(f"Iterations {self.iterations} is below minimum {ARGON2_MIN_ITERATIONS}")
         if self.parallelism < ARGON2_MIN_PARALLELISM:
             issues.append(
-                f"Parallelism {self.parallelism} is below minimum "
-                f"{ARGON2_MIN_PARALLELISM}"
+                f"Parallelism {self.parallelism} is below minimum {ARGON2_MIN_PARALLELISM}"
             )
         if issues:
             raise KdfError("Weak Argon2 parameters: " + "; ".join(issues))
@@ -348,9 +343,7 @@ def derive_key_argon2(
     if enforce_minimums:
         config.validate_security()
 
-    argon2_type = (
-        Argon2Type.ID if config.variant == KdfType.ARGON2ID else Argon2Type.D
-    )
+    argon2_type = Argon2Type.ID if config.variant == KdfType.ARGON2ID else Argon2Type.D
 
     derived = hash_secret_raw(
         secret=password,
@@ -501,9 +494,7 @@ def derive_composite_key(
     try:
         if password is not None:
             # Wrap password hash in SecureBytes for proper zeroization
-            pwd_hash = SecureBytes(
-                hashlib.sha256(password.encode("utf-8")).digest()
-            )
+            pwd_hash = SecureBytes(hashlib.sha256(password.encode("utf-8")).digest())
             secure_parts.append(pwd_hash)
             parts.append(pwd_hash.data)
 

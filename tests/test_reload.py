@@ -136,9 +136,7 @@ class TestReload:
             filepath = Path(f.name)
 
         try:
-            db1 = Database.create(
-                filepath=filepath, password="test", database_name="Original"
-            )
+            db1 = Database.create(filepath=filepath, password="test", database_name="Original")
             db1.save()
 
             # Modify settings in another instance

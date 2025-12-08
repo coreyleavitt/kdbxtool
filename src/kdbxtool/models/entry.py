@@ -15,14 +15,16 @@ if TYPE_CHECKING:
 
 
 # Fields that have special handling and shouldn't be treated as custom properties
-RESERVED_KEYS = frozenset({
-    "Title",
-    "UserName",
-    "Password",
-    "URL",
-    "Notes",
-    "otp",
-})
+RESERVED_KEYS = frozenset(
+    {
+        "Title",
+        "UserName",
+        "Password",
+        "URL",
+        "Notes",
+        "otp",
+    }
+)
 
 
 @dataclass
@@ -219,9 +221,7 @@ class Entry:
                 raise ValueError(f"No custom icon found with name: {value}")
             self.custom_icon_uuid = icon_uuid
         else:
-            raise TypeError(
-                f"custom_icon must be UUID, str, or None, not {type(value).__name__}"
-            )
+            raise TypeError(f"custom_icon must be UUID, str, or None, not {type(value).__name__}")
 
     # --- Custom properties ---
 
@@ -242,9 +242,7 @@ class Entry:
         field = self.strings.get(key)
         return field.value if field else None
 
-    def set_custom_property(
-        self, key: str, value: str, protected: bool = False
-    ) -> None:
+    def set_custom_property(self, key: str, value: str, protected: bool = False) -> None:
         """Set a custom property.
 
         Args:
@@ -278,11 +276,7 @@ class Entry:
     @property
     def custom_properties(self) -> dict[str, str | None]:
         """Get all custom properties as a dictionary."""
-        return {
-            k: v.value
-            for k, v in self.strings.items()
-            if k not in RESERVED_KEYS
-        }
+        return {k: v.value for k, v in self.strings.items() if k not in RESERVED_KEYS}
 
     # --- Convenience methods ---
 
@@ -487,9 +481,7 @@ class Entry:
             >>> actual_password = entry.deref('password')
         """
         if self._database is None:
-            raise ValueError(
-                "Cannot dereference field: entry is not connected to a database"
-            )
+            raise ValueError("Cannot dereference field: entry is not connected to a database")
 
         value = getattr(self, field.lower())
         return self._database.deref(value)

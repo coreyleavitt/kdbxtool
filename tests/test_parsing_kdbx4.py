@@ -316,9 +316,7 @@ class TestKdbx4Writer:
         )
 
         # Must have both to decrypt
-        result = read_kdbx4(
-            encrypted, password=password, keyfile_data=keyfile_data
-        )
+        result = read_kdbx4(encrypted, password=password, keyfile_data=keyfile_data)
         assert result.xml_data == sample_xml
 
         # Password alone should fail

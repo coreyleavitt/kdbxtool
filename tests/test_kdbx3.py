@@ -28,9 +28,7 @@ def open_kdbx3_no_warning(path: Path, password: str, keyfile: Path) -> Database:
         return Database.open(path, password=password, keyfile=keyfile)
 
 
-def open_kdbx3_bytes_no_warning(
-    data: bytes, password: str, keyfile_data: bytes
-) -> Database:
+def open_kdbx3_bytes_no_warning(data: bytes, password: str, keyfile_data: bytes) -> Database:
     """Open KDBX3 database from bytes suppressing the upgrade warning."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)

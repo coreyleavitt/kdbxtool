@@ -152,9 +152,7 @@ class Kdbx4Reader:
             master_key_bytes = master_key.data
 
         # Derive keys for HMAC and encryption
-        hmac_key, cipher_key = self._derive_keys(
-            master_key_bytes, header.master_seed
-        )
+        hmac_key, cipher_key = self._derive_keys(master_key_bytes, header.master_seed)
 
         # Verify header HMAC
         block_key = self._compute_block_hmac_key(hmac_key, 0xFFFFFFFFFFFFFFFF)
@@ -190,9 +188,7 @@ class Kdbx4Reader:
             transformed_key=master_key_bytes,
         )
 
-    def _derive_master_key(
-        self, header: KdbxHeader, composite_key: SecureBytes
-    ) -> SecureBytes:
+    def _derive_master_key(self, header: KdbxHeader, composite_key: SecureBytes) -> SecureBytes:
         """Derive master key using the KDF specified in header."""
         if header.kdf_type in (KdfType.ARGON2ID, KdfType.ARGON2D):
             if (
@@ -220,9 +216,7 @@ class Kdbx4Reader:
                     stacklevel=4,
                 )
             # Don't enforce minimums when reading - accept what the file has
-            return derive_key_argon2(
-                composite_key.data, argon2_config, enforce_minimums=False
-            )
+            return derive_key_argon2(composite_key.data, argon2_config, enforce_minimums=False)
         elif header.kdf_type == KdfType.AES_KDF:
             if header.aes_kdf_rounds is None:
                 raise KdfError("Missing AES-KDF rounds in header")
@@ -234,9 +228,7 @@ class Kdbx4Reader:
         else:
             raise KdfError(f"Unsupported KDF: {header.kdf_type}")
 
-    def _derive_keys(
-        self, transformed_key: bytes, master_seed: bytes
-    ) -> tuple[bytes, bytes]:
+    def _derive_keys(self, transformed_key: bytes, master_seed: bytes) -> tuple[bytes, bytes]:
         """Derive HMAC key and cipher key from transformed key.
 
         KDBX4 key derivation:
@@ -292,9 +284,7 @@ class Kdbx4Reader:
                     # Verify block HMAC
                     block_key = self._compute_block_hmac_key(hmac_key, block_index)
                     hmac_data = (
-                        struct.pack("<Q", block_index)
-                        + struct.pack("<I", block_len)
-                        + block_data
+                        struct.pack("<Q", block_index) + struct.pack("<I", block_len) + block_data
                     )
                     expected = compute_hmac_sha256(block_key, hmac_data)
 
@@ -416,9 +406,7 @@ class Kdbx4Writer:
             master_key_bytes = master_key.data
 
         # Derive keys for HMAC and encryption
-        hmac_key, cipher_key = self._derive_keys(
-            master_key_bytes, header.master_seed
-        )
+        hmac_key, cipher_key = self._derive_keys(master_key_bytes, header.master_seed)
 
         # Build inner header
         inner_header_bytes = self._build_inner_header(inner_header)
@@ -452,9 +440,7 @@ class Kdbx4Writer:
         # Assemble final file
         return header_bytes + header_hash + header_hmac + hmac_blocks
 
-    def _derive_master_key(
-        self, header: KdbxHeader, composite_key: SecureBytes
-    ) -> SecureBytes:
+    def _derive_master_key(self, header: KdbxHeader, composite_key: SecureBytes) -> SecureBytes:
         """Derive master key using the KDF specified in header."""
         if header.kdf_type in (KdfType.ARGON2ID, KdfType.ARGON2D):
             if (
@@ -476,17 +462,15 @@ class Kdbx4Writer:
             if header.aes_kdf_rounds is None:
                 raise KdfError("Missing AES-KDF rounds in header")
 
-            config = AesKdfConfig(
+            aes_config = AesKdfConfig(
                 rounds=header.aes_kdf_rounds,
                 salt=header.kdf_salt,
             )
-            return derive_key_aes_kdf(composite_key.data, config)
+            return derive_key_aes_kdf(composite_key.data, aes_config)
         else:
             raise KdfError(f"Unsupported KDF for writing: {header.kdf_type}")
 
-    def _derive_keys(
-        self, transformed_key: bytes, master_seed: bytes
-    ) -> tuple[bytes, bytes]:
+    def _derive_keys(self, transformed_key: bytes, master_seed: bytes) -> tuple[bytes, bytes]:
         """Derive HMAC key and cipher key from transformed key."""
         cipher_key = hashlib.sha256(master_seed + transformed_key).digest()
         hmac_key = hashlib.sha512(master_seed + transformed_key + b"\x01").digest()
@@ -529,9 +513,7 @@ class Kdbx4Writer:
         padding = bytes([padding_len] * padding_len)
         return data + padding
 
-    def _build_hmac_block_stream(
-        self, data: bytes, hmac_key: bytes
-    ) -> bytes:
+    def _build_hmac_block_stream(self, data: bytes, hmac_key: bytes) -> bytes:
         """Build HMAC block stream from data."""
         ctx = BuildContext()
         block_index = 0
@@ -544,11 +526,7 @@ class Kdbx4Writer:
 
             # Compute block HMAC
             block_key = self._compute_block_hmac_key(hmac_key, block_index)
-            hmac_data = (
-                struct.pack("<Q", block_index)
-                + struct.pack("<I", block_len)
-                + block_data
-            )
+            hmac_data = struct.pack("<Q", block_index) + struct.pack("<I", block_len) + block_data
             block_hmac = compute_hmac_sha256(block_key, hmac_data)
 
             ctx.write(block_hmac)

@@ -10,35 +10,30 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --dev --python ${{ matrix.python-version }}
 
       - name: Run tests with coverage
-        run: |
-          pytest tests/ --cov=kdbxtool --cov-report=xml --cov-report=html
+        run: uv run pytest tests/ --cov=kdbxtool --cov-report=xml --cov-report=html
 
       - name: Generate coverage badge JSON
         if: matrix.python-version == '3.12'
         run: |
-          # Extract coverage percentage from HTML report (matches displayed value)
+          # Extract coverage percentage from HTML report
           COVERAGE=$(python -c "
           import re
           with open('htmlcov/index.html') as f:
               content = f.read()
-          # Look for 'Coverage report: XX%' or the total percentage
           match = re.search(r'(\d+)%', content)
           print(match.group(1) if match else '0')
           ")
@@ -82,29 +77,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --dev
 
       - name: Run mypy with HTML report
-        run: |
-          mypy --strict --html-report mypy-report src/kdbxtool
+        run: uv run mypy --strict --html-report mypy-report src/kdbxtool
 
       - name: Generate mypy badge JSON
         run: |
           # Extract imprecise percentage from mypy index.html
-          # The report shows "X.XX% imprecise" as the overall summary
           IMPRECISE=$(python -c "
           import re
           with open('mypy-report/index.html') as f:
               content = f.read()
-          # Look for the overall imprecise percentage (first one in the file)
           match = re.search(r'(\d+\.?\d*)% imprecise', content)
           if match:
               print(match.group(1))
@@ -113,7 +101,6 @@ jobs:
           ")
 
           # Color based on imprecise % (lower is better)
-          # Convert to integer for comparison (bash doesn't do floats)
           IMPRECISE_INT=$(echo "$IMPRECISE" | cut -d. -f1)
           if [ "$IMPRECISE_INT" -le 1 ]; then
             COLOR="brightgreen"
@@ -146,19 +133,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+      - name: Ruff check
+        run: uvx ruff check src/kdbxtool
 
-      - name: Run ruff
-        run: |
-          ruff check src/kdbxtool
+      - name: Ruff format check
+        run: uvx ruff format --check src/kdbxtool tests/
 
   # Deploy reports to GitHub Pages (only on push to master)
   deploy-reports:

@@ -469,24 +469,35 @@ def _process_keyfile(keyfile_data: bytes) -> bytes:
 def derive_composite_key(
     password: str | None = None,
     keyfile_data: bytes | None = None,
+    yubikey_response: bytes | None = None,
 ) -> SecureBytes:
-    """Create composite key from password and/or keyfile.
+    """Create composite key from password, keyfile, and/or YubiKey response.
 
-    The composite key is SHA-256(SHA-256(password) || keyfile_key).
+    The composite key is SHA-256(password_hash || keyfile_key || yubikey_response).
+    This follows the KeePassXC approach for challenge-response integration.
+
     The keyfile_key is processed according to KeePass keyfile format rules.
+    The YubiKey response (20 bytes) is incorporated directly if provided.
 
     Args:
         password: Optional password string
         keyfile_data: Optional keyfile contents
+        yubikey_response: Optional 20-byte YubiKey HMAC-SHA1 response
 
     Returns:
         32-byte composite key wrapped in SecureBytes
 
     Raises:
-        ValueError: If neither password nor keyfile is provided
+        MissingCredentialsError: If no credentials are provided
+        ValueError: If yubikey_response is provided but wrong size
     """
-    if password is None and keyfile_data is None:
+    if password is None and keyfile_data is None and yubikey_response is None:
         raise MissingCredentialsError()
+
+    if yubikey_response is not None and len(yubikey_response) != 20:
+        raise ValueError(
+            f"YubiKey response must be 20 bytes (HMAC-SHA1), got {len(yubikey_response)}"
+        )
 
     parts: list[bytes] = []
     secure_parts: list[SecureBytes] = []
@@ -501,6 +512,10 @@ def derive_composite_key(
         if keyfile_data is not None:
             key_bytes = _process_keyfile(keyfile_data)
             parts.append(key_bytes)
+
+        if yubikey_response is not None:
+            # YubiKey response is incorporated directly (20 bytes)
+            parts.append(yubikey_response)
 
         composite = hashlib.sha256(b"".join(parts)).digest()
         return SecureBytes(composite)

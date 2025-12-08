@@ -33,6 +33,7 @@ dependencies = [
 
 [project.optional-dependencies]
 twofish = ["oxifish>=0.1.1"]
+yubikey = ["yubikey-manager>=5.0.0"]
 
 [dependency-groups]
 dev = [

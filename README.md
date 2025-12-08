@@ -32,6 +32,16 @@ pip install kdbxtool[twofish]
 
 This installs [oxifish](https://github.com/coreyleavitt/oxifish), a Rust-based Twofish implementation.
 
+### Optional: YubiKey Support
+
+For hardware-backed authentication with YubiKey HMAC-SHA1 challenge-response:
+
+```bash
+pip install kdbxtool[yubikey]
+```
+
+This installs [yubikey-manager](https://github.com/Yubico/yubikey-manager) for YubiKey communication.
+
 ## Quick Start
 
 ```python
@@ -58,6 +68,47 @@ db = Database.create(password="my-password", database_name="My Vault")
 db.root_group.create_entry(title="First Entry", username="me", password="secret")
 db.save("my-vault.kdbx")
 ```
+
+## YubiKey Support
+
+kdbxtool supports YubiKey HMAC-SHA1 challenge-response authentication, compatible with KeePassXC:
+
+```python
+from kdbxtool import Database
+from kdbxtool.security import list_yubikeys, is_yubikey_available
+
+# Check YubiKey availability
+if is_yubikey_available():
+    devices = list_yubikeys()
+    for device in devices:
+        print(f"Found: {device['name']} (serial: {device.get('serial', 'N/A')})")
+
+# Open a YubiKey-protected database
+with Database.open("vault.kdbx", password="my-password", yubikey_slot=2) as db:
+    print(f"Entries: {len(db.find_entries())}")
+    db.save()
+
+# Create a new database with YubiKey protection
+db = Database.create(
+    password="my-password",
+    yubikey_slot=2,           # Use slot 2 (recommended)
+    yubikey_serial=12345678,  # Optional: specific YubiKey serial
+)
+db.save("protected.kdbx")
+
+# Open with specific YubiKey when multiple are connected
+with Database.open(
+    "vault.kdbx",
+    password="my-password",
+    yubikey_slot=2,
+    yubikey_serial=12345678,
+) as db:
+    pass
+```
+
+Requirements:
+- YubiKey with HMAC-SHA1 configured in slot 1 or 2
+- Configure with: `ykman otp chalresp -g 2` (generates random secret for slot 2)
 
 ## Security
 

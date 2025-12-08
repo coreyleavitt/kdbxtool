@@ -1,5 +1,7 @@
 """Tests for empty group operation."""
 
+import time
+
 import pytest
 
 from kdbxtool import Database, Group
@@ -86,8 +88,13 @@ class TestEmptyGroup:
     def test_empty_group_updates_parent_timestamp(self, db: Database) -> None:
         """Test that empty_group updates group modification time."""
         group = db.find_groups(name="Test Group")[0]
+
+        # Sleep to ensure clock ticks between timestamp capture and operation
+        # (Windows datetime.now() has ~15ms resolution and can return same value)
+        time.sleep(0.002)
         old_mtime = group.times.last_modification_time
 
+        time.sleep(0.002)
         db.empty_group(group)
 
         assert group.times.last_modification_time > old_mtime

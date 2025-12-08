@@ -1,5 +1,7 @@
 """Tests for move entry/group operations."""
 
+import time
+
 import pytest
 
 from kdbxtool import Database, Entry, Group
@@ -26,8 +28,12 @@ class TestEntryMoveTo:
         group_b = db.find_groups(name="Group B")[0]
         entry = db.find_entries(title="Entry 1")[0]
 
+        # Sleep to ensure clock ticks between timestamp capture and operation
+        # (Windows datetime.now() has ~15ms resolution and can return same value)
+        time.sleep(0.002)
         original_location_changed = entry.times.location_changed
 
+        time.sleep(0.002)
         entry.move_to(group_b)
 
         assert entry.parent is group_b
@@ -41,9 +47,13 @@ class TestEntryMoveTo:
         group_b = db.find_groups(name="Group B")[0]
         entry = db.find_entries(title="Entry 1")[0]
 
+        # Sleep to ensure clock ticks between timestamp capture and operation
+        # (Windows datetime.now() has ~15ms resolution and can return same value)
+        time.sleep(0.002)
         old_group_a_mtime = group_a.times.last_modification_time
         old_group_b_mtime = group_b.times.last_modification_time
 
+        time.sleep(0.002)
         entry.move_to(group_b)
 
         # Both groups should have updated modification times
@@ -97,8 +107,12 @@ class TestGroupMoveTo:
         group_a1 = db.find_groups(name="Group A1")[0]
         group_b = db.find_groups(name="Group B")[0]
 
+        # Sleep to ensure clock ticks between timestamp capture and operation
+        # (Windows datetime.now() has ~15ms resolution and can return same value)
+        time.sleep(0.002)
         original_location_changed = group_a1.times.location_changed
 
+        time.sleep(0.002)
         group_a1.move_to(group_b)
 
         assert group_a1.parent is group_b

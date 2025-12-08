@@ -425,6 +425,75 @@ class Entry:
         old_parent.touch(modify=True)
         destination.touch(modify=True)
 
+    # --- Field References ---
+
+    def ref(self, field: str) -> str:
+        """Create a reference string pointing to a field of this entry.
+
+        Creates a KeePass field reference string that can be used in other
+        entries to reference values from this entry. References use the
+        entry's UUID for lookup.
+
+        Args:
+            field: One of 'title', 'username', 'password', 'url', 'notes', or 'uuid'
+
+        Returns:
+            Field reference string in format {REF:X@I:UUID}
+
+        Raises:
+            ValueError: If field is not a valid field name
+
+        Example:
+            >>> main_entry = db.find_entries(title='Main Account', first=True)
+            >>> ref_string = main_entry.ref('password')
+            >>> # Returns '{REF:P@I:...UUID...}'
+            >>> other_entry.password = ref_string
+        """
+        field_codes = {
+            "title": "T",
+            "username": "U",
+            "password": "P",
+            "url": "A",
+            "notes": "N",
+            "uuid": "I",
+        }
+        field_lower = field.lower()
+        if field_lower not in field_codes:
+            valid = ", ".join(sorted(field_codes.keys()))
+            raise ValueError(f"Invalid field '{field}'. Must be one of: {valid}")
+
+        field_code = field_codes[field_lower]
+        uuid_hex = self.uuid.hex.upper()
+        return f"{{REF:{field_code}@I:{uuid_hex}}}"
+
+    def deref(self, field: str) -> str | uuid_module.UUID | None:
+        """Resolve any field references in the given field's value.
+
+        If the field's value contains KeePass field references ({REF:X@Y:Z}),
+        resolves them to the actual values from the referenced entries.
+
+        Args:
+            field: One of 'title', 'username', 'password', 'url', 'notes'
+
+        Returns:
+            The resolved value with all references replaced, a UUID if the
+            referenced field is 'uuid', or None if a referenced entry is not found
+
+        Raises:
+            ValueError: If no database reference is available
+
+        Example:
+            >>> # If entry.password contains '{REF:P@I:...UUID...}'
+            >>> actual_password = entry.deref('password')
+        """
+        if self._database is None:
+            raise ValueError(
+                "Cannot dereference field: entry is not connected to a database"
+            )
+
+        value = getattr(self, field.lower())
+        return self._database.deref(value)
+
     def __str__(self) -> str:
         return f'Entry: "{self.title}" ({self.username})'
 

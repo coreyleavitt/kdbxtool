@@ -682,8 +682,12 @@ class Database:
             raise Kdbx3UpgradeRequired()
 
         # Use provided yubikey params, or fall back to stored ones
-        effective_yubikey_slot = yubikey_slot if yubikey_slot is not None else self._yubikey_slot
-        effective_yubikey_serial = yubikey_serial if yubikey_serial is not None else self._yubikey_serial
+        effective_yubikey_slot = (
+            yubikey_slot if yubikey_slot is not None else self._yubikey_slot
+        )
+        effective_yubikey_serial = (
+            yubikey_serial if yubikey_serial is not None else self._yubikey_serial
+        )
 
         data = self.to_bytes(
             regenerate_seeds=regenerate_seeds,

@@ -215,8 +215,8 @@ class YubiKeyNotFoundError(YubiKeyError):
     Ensure the YubiKey is properly inserted.
     """
 
-    def __init__(self) -> None:
-        super().__init__("No YubiKey device found. Ensure it is connected.")
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(message or "No YubiKey device found. Ensure it is connected.")
 
 
 class YubiKeySlotError(YubiKeyError):

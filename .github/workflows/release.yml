@@ -34,6 +34,7 @@ on:
 
 permissions:
   contents: write
+  actions: write  # Required to trigger docs workflow
 
 jobs:
   prepare-version:
@@ -200,5 +201,12 @@ jobs:
           else
             gh release create "v$VERSION" dist/* --repo ${{ github.repository }} --generate-notes
           fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger docs build
+        run: |
+          VERSION="${{ needs.prepare-version.outputs.version }}"
+          gh workflow run docs.yml -f ref="v$VERSION"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

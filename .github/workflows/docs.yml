@@ -10,6 +10,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build docs from (tag or branch)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -31,8 +36,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # For workflow_run, checkout the commit that triggered CI
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          # Priority: workflow_dispatch input > workflow_run commit > current ref
+          ref: ${{ inputs.ref || github.event.workflow_run.head_sha || github.ref }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -40,8 +45,11 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          # Check input ref first (from workflow_dispatch), then GITHUB_REF
+          REF="${{ inputs.ref || github.ref }}"
+          if [[ "$REF" == refs/tags/v* ]] || [[ "$REF" == v* ]]; then
+            VERSION="${REF#refs/tags/}"
+            VERSION="${VERSION#v}"
           else
             VERSION="latest"
           fi
@@ -71,8 +79,10 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          REF="${{ inputs.ref || github.ref }}"
+          if [[ "$REF" == refs/tags/v* ]] || [[ "$REF" == v* ]]; then
+            VERSION="${REF#refs/tags/}"
+            VERSION="${VERSION#v}"
           else
             VERSION="latest"
           fi

@@ -1,0 +1,204 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump (ignored for testpypi)'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - stable
+          - 'no'
+      prerelease:
+        description: 'Prerelease type (ignored for testpypi)'
+        required: true
+        default: 'no'
+        type: choice
+        options:
+          - 'no'
+          - alpha
+          - beta
+          - rc
+      target:
+        description: 'Publish target'
+        required: true
+        default: 'testpypi'
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-version:
+    name: Prepare version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      commit_sha: ${{ steps.version.outputs.commit_sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set version
+        id: version
+        run: |
+          if [ "${{ inputs.target }}" = "testpypi" ]; then
+            # For TestPyPI: use current version + .dev suffix (no commit)
+            CURRENT=$(uv version --short)
+            VERSION="${CURRENT}.dev${{ github.run_number }}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "commit_sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+          else
+            # For PyPI: bump version and commit
+            BUMP="${{ inputs.bump }}"
+            PRERELEASE="${{ inputs.prerelease }}"
+
+            if [ "$BUMP" = "stable" ]; then
+              # Promote prerelease to stable
+              uv version --bump stable
+            elif [ "$BUMP" = "no" ] && [ "$PRERELEASE" = "no" ]; then
+              echo "Error: Must specify either a version bump or prerelease type"
+              exit 1
+            elif [ "$BUMP" = "no" ]; then
+              # Prerelease-only bump (a1→a2, rc1→rc2)
+              uv version --bump "$PRERELEASE"
+            elif [ "$PRERELEASE" = "no" ]; then
+              # Stable version bump
+              uv version --bump "$BUMP"
+            else
+              # Version bump + prerelease (0.1.0 → 0.1.1a1)
+              uv version --bump "$BUMP" --bump "$PRERELEASE"
+            fi
+            VERSION=$(uv version --short)
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+            # Commit via API (signed)
+            PYPROJECT_CONTENT=$(base64 -w 0 pyproject.toml)
+            PYPROJECT_SHA=$(gh api repos/${{ github.repository }}/git/blobs \
+              -f content="$PYPROJECT_CONTENT" \
+              -f encoding=base64 \
+              --jq '.sha')
+
+            TREE_SHA=$(gh api repos/${{ github.repository }}/git/trees \
+              -f base_tree="${{ github.sha }}" \
+              -f 'tree[][path]=pyproject.toml' \
+              -f 'tree[][mode]=100644' \
+              -f 'tree[][type]=blob' \
+              -f "tree[][sha]=$PYPROJECT_SHA" \
+              --jq '.sha')
+
+            COMMIT_SHA=$(gh api repos/${{ github.repository }}/git/commits \
+              -f message="Bump version to $VERSION [skip ci]" \
+              -f tree="$TREE_SHA" \
+              -f "parents[]=${{ github.sha }}" \
+              --jq '.sha')
+
+            gh api repos/${{ github.repository }}/git/refs/heads/${{ github.ref_name }} \
+              -X PATCH \
+              -f sha="$COMMIT_SHA"
+
+            echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build distribution
+    needs: [prepare-version]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-version.outputs.commit_sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set dev version for TestPyPI
+        if: inputs.target == 'testpypi'
+        run: uv version "${{ needs.prepare-version.outputs.version }}"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [prepare-version, build]
+    runs-on: ubuntu-latest
+    if: inputs.target == 'testpypi'
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/kdbxtool/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [prepare-version, build]
+    runs-on: ubuntu-latest
+    if: inputs.target == 'pypi'
+    environment:
+      name: pypi
+      url: https://pypi.org/project/kdbxtool/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  create-release:
+    name: Create GitHub Release
+    needs: [prepare-version, publish-pypi]
+    runs-on: ubuntu-latest
+    if: inputs.target == 'pypi'
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Create release
+        run: |
+          VERSION="${{ needs.prepare-version.outputs.version }}"
+          if echo "$VERSION" | grep -qE '(a|b|rc)[0-9]+'; then
+            gh release create "v$VERSION" dist/* --repo ${{ github.repository }} --generate-notes --prerelease
+          else
+            gh release create "v$VERSION" dist/* --repo ${{ github.repository }} --generate-notes
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

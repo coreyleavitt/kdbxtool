@@ -22,7 +22,7 @@ from kdbxtool.database import (
     PROTECTED_STREAM_SALSA20,
     ProtectedStreamCipher,
 )
-from kdbxtool.security import Cipher, KdfType
+from kdbxtool.security import Argon2Config, Cipher, KdfType
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -99,11 +99,12 @@ class TestDatabaseCreate:
 
     def test_create_with_options(self) -> None:
         """Test creating database with custom options."""
+        kdf = Argon2Config.fast(variant=KdfType.ARGON2D)
         db = Database.create(
             password="test",
             database_name="Custom DB",
             cipher=Cipher.CHACHA20,
-            kdf_type=KdfType.ARGON2D,
+            kdf_config=kdf,
         )
 
         assert db.settings.database_name == "Custom DB"

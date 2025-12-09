@@ -436,7 +436,7 @@ class Database:
 
             warnings.warn(
                 "Opening KDBX3 database. Saving will automatically upgrade to KDBX4 "
-                "with modern security settings (Argon2id, ChaCha20). "
+                "with modern security settings (Argon2d, ChaCha20). "
                 "Use save(allow_upgrade=True) to confirm.",
                 UserWarning,
                 stacklevel=3,
@@ -493,7 +493,7 @@ class Database:
         keyfile: str | Path | None = None,
         database_name: str = "Database",
         cipher: Cipher = Cipher.AES256_CBC,
-        kdf_type: KdfType = KdfType.ARGON2ID,
+        kdf_config: KdfConfig | None = None,
     ) -> Database:
         """Create a new KDBX database.
 
@@ -503,7 +503,8 @@ class Database:
             keyfile: Path to keyfile (optional)
             database_name: Name for the database
             cipher: Encryption cipher to use
-            kdf_type: KDF type to use
+            kdf_config: KDF configuration (Argon2Config or AesKdfConfig).
+                Defaults to Argon2Config.standard() with Argon2d variant.
 
         Returns:
             New Database instance
@@ -518,6 +519,10 @@ class Database:
                 raise FileNotFoundError(f"Keyfile not found: {keyfile}")
             keyfile_data = keyfile_path.read_bytes()
 
+        # Use provided config or standard Argon2d defaults
+        if kdf_config is None:
+            kdf_config = Argon2Config.standard()
+
         # Create root group
         root_group = Group.create_root(database_name)
 
@@ -525,19 +530,33 @@ class Database:
         recycle_bin = Group(name="Recycle Bin", icon_id="43")
         root_group.add_subgroup(recycle_bin)
 
-        # Create default header
-        header = KdbxHeader(
-            version=KdbxVersion.KDBX4,
-            cipher=cipher,
-            compression=CompressionType.GZIP,
-            master_seed=os.urandom(32),
-            encryption_iv=os.urandom(cipher.iv_size),
-            kdf_type=kdf_type,
-            kdf_salt=os.urandom(32),
-            argon2_memory_kib=64 * 1024,  # 64 MiB
-            argon2_iterations=3,
-            argon2_parallelism=4,
-        )
+        # Create header based on KDF config type
+        if isinstance(kdf_config, Argon2Config):
+            header = KdbxHeader(
+                version=KdbxVersion.KDBX4,
+                cipher=cipher,
+                compression=CompressionType.GZIP,
+                master_seed=os.urandom(32),
+                encryption_iv=os.urandom(cipher.iv_size),
+                kdf_type=kdf_config.variant,
+                kdf_salt=kdf_config.salt,
+                argon2_memory_kib=kdf_config.memory_kib,
+                argon2_iterations=kdf_config.iterations,
+                argon2_parallelism=kdf_config.parallelism,
+            )
+        elif isinstance(kdf_config, AesKdfConfig):
+            header = KdbxHeader(
+                version=KdbxVersion.KDBX4,
+                cipher=cipher,
+                compression=CompressionType.GZIP,
+                master_seed=os.urandom(32),
+                encryption_iv=os.urandom(cipher.iv_size),
+                kdf_type=KdfType.AES_KDF,
+                kdf_salt=kdf_config.salt,
+                aes_kdf_rounds=kdf_config.rounds,
+            )
+        else:
+            raise DatabaseError(f"Unsupported KDF config type: {type(kdf_config)}")
 
         # Create inner header
         inner_header = InnerHeader(

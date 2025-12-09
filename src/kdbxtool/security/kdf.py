@@ -1,12 +1,12 @@
 """Key Derivation Functions for KDBX databases.
 
 This module provides secure KDF implementations for:
-- Argon2id: Modern KDF for KDBX4 (recommended)
-- Argon2d: Legacy Argon2 variant for KDBX4 compatibility
+- Argon2d: Default KDF for KDBX4 (KeePassXC compatible, better GPU resistance)
+- Argon2id: Alternative Argon2 variant with timing attack resistance
 - AES-KDF: Legacy KDF for KDBX3 read support (not for new databases)
 
 Security considerations:
-- Argon2id enforces minimum parameters to prevent weak configurations
+- Argon2 enforces minimum parameters to prevent weak configurations
 - All derived keys are returned as SecureBytes for automatic zeroization
 """
 
@@ -91,7 +91,7 @@ class Argon2Config:
     iterations: int
     parallelism: int
     salt: bytes
-    variant: KdfType = KdfType.ARGON2ID
+    variant: KdfType = KdfType.ARGON2D
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""

@@ -1,0 +1,26 @@
+<div class="version-switcher">
+  <select onchange="if(this.value) window.location.href=this.value">
+    <option value="" disabled>Version</option>
+    {% for version in defined_versions %}
+    <option value="{{ version.url }}" {% if version.version == current_version %}selected{% endif %}>
+      {{ version.name }}
+    </option>
+    {% endfor %}
+  </select>
+</div>
+
+<style>
+.version-switcher {
+  padding: 0 var(--sidebar-item-spacing-horizontal);
+  margin-bottom: 1em;
+}
+.version-switcher select {
+  width: 100%;
+  padding: 0.5em;
+  border: 1px solid var(--color-sidebar-link-text);
+  background: var(--color-sidebar-background);
+  color: var(--color-sidebar-link-text);
+  border-radius: 4px;
+  cursor: pointer;
+}
+</style>

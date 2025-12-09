@@ -4,7 +4,7 @@ This library provides a clean, type-safe API for reading and writing KeePass
 database files (KDBX format). It prioritizes security with:
 - Secure memory handling (zeroization of sensitive data)
 - Constant-time comparisons for authentication
-- Modern cryptographic defaults (Argon2id, ChaCha20)
+- Modern cryptographic defaults (Argon2d, ChaCha20)
 
 Example:
     from kdbxtool import Database

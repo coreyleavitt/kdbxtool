@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kdbxtool"
-version = "0.1.1"
+version = "0.1.2"
 description = "A modern, secure Python library for reading and writing KeePass KDBX databases"
 readme = "README.md"
 license = "Apache-2.0"

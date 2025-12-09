@@ -45,9 +45,15 @@ dev = [
     "lxml>=5.0.0",  # Required for mypy --html-report
     "ruff>=0.1.0",
 ]
+docs = [
+    "sphinx>=7.0",
+    "furo>=2024.0",
+    "myst-parser>=3.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/coreyleavitt/kdbxtool"
+Documentation = "https://coreyleavitt.github.io/kdbxtool/"
 Repository = "https://github.com/coreyleavitt/kdbxtool"
 
 [tool.hatch.build.targets.wheel]

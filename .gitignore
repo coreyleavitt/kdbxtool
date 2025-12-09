@@ -81,3 +81,7 @@ LEGAL_ANALYSIS.md
 
 # Notes (not tracked)
 notes/
+
+# Sphinx documentation build
+docs/_build/
+docs/_generated/

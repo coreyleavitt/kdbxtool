@@ -1,7 +1,5 @@
 """Sphinx configuration for kdbxtool documentation."""
 
-import os
-
 project = "kdbxtool"
 copyright = "2025, Corey Leavitt"
 author = "Corey Leavitt"
@@ -45,21 +43,7 @@ intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
 # MyST settings
 myst_enable_extensions = ["colon_fence", "deflist"]
 
-# Version switcher configuration
-current_version = os.environ.get("DOCS_VERSION", "latest")
-site_url = "https://coreyleavitt.github.io/kdbxtool"
-
-# Available versions (CI updates this dynamically via versions.json)
-defined_versions = [
-    {"name": "latest", "version": "latest", "url": f"{site_url}/latest/"},
-]
-
-html_context = {
-    "defined_versions": defined_versions,
-    "current_version": current_version,
-}
-
-# Inject version switcher into sidebar
+# Inject version switcher into sidebar (versions loaded dynamically via JS)
 html_sidebars = {
     "**": [
         "sidebar/brand.html",

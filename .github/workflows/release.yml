@@ -34,7 +34,8 @@ on:
 
 permissions:
   contents: write
-  actions: write  # Required to trigger docs workflow
+  pages: write
+  id-token: write
 
 jobs:
   prepare-version:
@@ -204,9 +205,57 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Trigger docs build
+  deploy-versioned-docs:
+    name: Deploy versioned docs
+    needs: [prepare-version, create-release]
+    runs-on: ubuntu-latest
+    if: inputs.target == 'pypi'
+    environment:
+      name: github-pages
+    concurrency:
+      group: docs
+      cancel-in-progress: false
+    steps:
+      - name: Download existing pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get the latest pages artifact
+          ARTIFACT_ID=$(gh api repos/${{ github.repository }}/actions/artifacts \
+            --jq '[.artifacts[] | select(.name == "github-pages")] | first | .id')
+
+          if [ -z "$ARTIFACT_ID" ] || [ "$ARTIFACT_ID" = "null" ]; then
+            echo "No existing pages found"
+            exit 1
+          fi
+
+          gh api repos/${{ github.repository }}/actions/artifacts/$ARTIFACT_ID/zip > pages.zip
+          unzip pages.zip -d pages_tar/
+          mkdir -p deploy
+          tar -xf pages_tar/artifact.tar -C deploy/
+
+      - name: Copy latest to versioned
         run: |
           VERSION="${{ needs.prepare-version.outputs.version }}"
-          gh workflow run docs.yml -f ref="v$VERSION"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          cp -r deploy/latest "deploy/$VERSION"
+
+      - name: Update versions.json
+        run: |
+          VERSION="${{ needs.prepare-version.outputs.version }}"
+
+          # Add new version to the list (after latest, before other versions)
+          jq --arg v "$VERSION" --arg name "v$VERSION" \
+            'if any(.version == $v) then . else [.[0]] + [{"name": $name, "version": $v}] + .[1:] end' \
+            deploy/versions.json > deploy/versions.json.new
+          mv deploy/versions.json.new deploy/versions.json
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: deploy/
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

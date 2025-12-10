@@ -18,13 +18,13 @@ import os
 
 import pytest
 
-from kdbxtool.security.yubikey import is_yubikey_available
+from kdbxtool.security.yubikey import YUBIKEY_AVAILABLE
 
 # Skip entire module if yubikey-manager not installed
 pytestmark = [
     pytest.mark.hardware,
     pytest.mark.skipif(
-        not is_yubikey_available(),
+        not YUBIKEY_AVAILABLE,
         reason="yubikey-manager not installed",
     ),
 ]
@@ -40,7 +40,7 @@ def get_test_yubikey_config() -> tuple[int, int | None]:
 
 def yubikey_connected() -> bool:
     """Check if a YubiKey is actually connected."""
-    if not is_yubikey_available():
+    if not YUBIKEY_AVAILABLE:
         return False
     try:
         from kdbxtool.security.yubikey import list_yubikeys

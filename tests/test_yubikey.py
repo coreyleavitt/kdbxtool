@@ -16,8 +16,8 @@ from kdbxtool.security.kdf import derive_composite_key
 from kdbxtool.security.memory import SecureBytes
 from kdbxtool.security.yubikey import (
     HMAC_SHA1_RESPONSE_SIZE,
+    YUBIKEY_AVAILABLE,
     YubiKeyConfig,
-    is_yubikey_available,
 )
 
 
@@ -77,15 +77,6 @@ class TestHmacSha1ResponseSize:
     def test_response_size(self) -> None:
         """Test that HMAC-SHA1 response size is 20 bytes."""
         assert HMAC_SHA1_RESPONSE_SIZE == 20
-
-
-class TestIsYubiKeyAvailable:
-    """Tests for is_yubikey_available function."""
-
-    def test_returns_bool(self) -> None:
-        """Test that function returns a boolean."""
-        result = is_yubikey_available()
-        assert isinstance(result, bool)
 
 
 class TestDeriveCompositeKeyWithYubiKey:
@@ -251,7 +242,7 @@ class TestYubiKeyMocked:
 # Tests that require yubikey-manager to be installed for proper mocking
 # These are marked to skip if yubikey-manager is not available
 @pytest.mark.skipif(
-    not is_yubikey_available(),
+    not YUBIKEY_AVAILABLE,
     reason="yubikey-manager not installed - cannot mock internal functions",
 )
 class TestYubiKeyWithManagerInstalled:
@@ -343,7 +334,7 @@ class TestDatabaseApiYubiKey:
 
 
 @pytest.mark.skipif(
-    not is_yubikey_available(),
+    not YUBIKEY_AVAILABLE,
     reason="yubikey-manager not installed - cannot mock internal functions",
 )
 class TestDatabaseApiYubiKeyMocked:

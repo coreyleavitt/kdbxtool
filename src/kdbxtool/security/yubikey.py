@@ -87,15 +87,6 @@ class YubiKeyConfig:
             raise ValueError("Timeout must be positive")
 
 
-def is_yubikey_available() -> bool:
-    """Check if YubiKey support is available.
-
-    Returns:
-        True if yubikey-manager is installed, False otherwise.
-    """
-    return YUBIKEY_AVAILABLE
-
-
 def list_yubikeys() -> list[dict[str, str | int]]:
     """List connected YubiKey devices.
 

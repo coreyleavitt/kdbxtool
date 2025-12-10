@@ -63,7 +63,6 @@ from .security.keyfile import (
 from .security.yubikey import (
     YubiKeyConfig,
     check_slot_configured,
-    is_yubikey_available,
     list_yubikeys,
 )
 
@@ -88,7 +87,6 @@ __all__ = [
     # YubiKey support
     "YubiKeyConfig",
     "check_slot_configured",
-    "is_yubikey_available",
     "list_yubikeys",
     # Exceptions
     "KdbxError",

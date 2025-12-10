@@ -41,7 +41,6 @@ from .yubikey import (
     YubiKeyConfig,
     check_slot_configured,
     compute_challenge_response,
-    is_yubikey_available,
     list_yubikeys,
 )
 
@@ -76,6 +75,5 @@ __all__ = [
     "YubiKeyConfig",
     "check_slot_configured",
     "compute_challenge_response",
-    "is_yubikey_available",
     "list_yubikeys",
 ]

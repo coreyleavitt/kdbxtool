@@ -28,6 +28,12 @@ from .kdf import (
     derive_key_aes_kdf,
     derive_key_argon2,
 )
+from .keyfile import (
+    KeyFileVersion,
+    create_keyfile,
+    create_keyfile_bytes,
+    parse_keyfile,
+)
 from .memory import SecureBytes
 from .yubikey import (
     HMAC_SHA1_RESPONSE_SIZE,
@@ -59,6 +65,11 @@ __all__ = [
     "derive_composite_key",
     "derive_key_aes_kdf",
     "derive_key_argon2",
+    # Keyfile
+    "KeyFileVersion",
+    "create_keyfile",
+    "create_keyfile_bytes",
+    "parse_keyfile",
     # YubiKey
     "HMAC_SHA1_RESPONSE_SIZE",
     "YUBIKEY_AVAILABLE",

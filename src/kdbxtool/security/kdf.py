@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING
 from argon2.low_level import Type as Argon2Type
 from argon2.low_level import hash_secret_raw
 
-from kdbxtool.exceptions import InvalidKeyFileError, KdfError, MissingCredentialsError
+from kdbxtool.exceptions import KdfError, MissingCredentialsError
 
-from .crypto import constant_time_compare
+from .keyfile import parse_keyfile
 from .memory import SecureBytes
 
 if TYPE_CHECKING:
@@ -405,67 +405,6 @@ def derive_key_aes_kdf(
     return SecureBytes(derived)
 
 
-def _process_keyfile(keyfile_data: bytes) -> bytes:
-    """Process keyfile data according to KeePass keyfile format.
-
-    KeePass supports several keyfile formats:
-    1. XML keyfile (v1.0 or v2.0) - key is base64/hex encoded in XML
-    2. 32-byte raw binary - used directly
-    3. 64-byte hex string - decoded from hex
-    4. Any other size - SHA-256 hashed
-
-    Args:
-        keyfile_data: Raw keyfile contents
-
-    Returns:
-        32-byte key derived from keyfile
-    """
-    # Try parsing as XML keyfile
-    try:
-        import base64
-
-        import defusedxml.ElementTree as ET
-
-        tree = ET.fromstring(keyfile_data)
-        version_elem = tree.find("Meta/Version")
-        data_elem = tree.find("Key/Data")
-
-        if version_elem is not None and data_elem is not None:
-            version = version_elem.text or ""
-            if version.startswith("1.0"):
-                # Version 1.0: base64 encoded
-                return base64.b64decode(data_elem.text or "")
-            elif version.startswith("2.0"):
-                # Version 2.0: hex encoded with hash verification
-                key_hex = (data_elem.text or "").strip()
-                key_bytes = bytes.fromhex(key_hex)
-                # Verify hash if present (constant-time comparison)
-                if "Hash" in data_elem.attrib:
-                    expected_hash = bytes.fromhex(data_elem.attrib["Hash"])
-                    computed_hash = hashlib.sha256(key_bytes).digest()[:4]
-                    if not constant_time_compare(expected_hash, computed_hash):
-                        raise InvalidKeyFileError("Keyfile hash verification failed")
-                return key_bytes
-    except (ET.ParseError, ValueError, AttributeError):
-        pass  # Not an XML keyfile
-
-    # Check for raw 32-byte key
-    if len(keyfile_data) == 32:
-        return keyfile_data
-
-    # Check for 64-byte hex-encoded key
-    if len(keyfile_data) == 64:
-        try:
-            # Verify it's valid hex
-            int(keyfile_data, 16)
-            return bytes.fromhex(keyfile_data.decode("ascii"))
-        except (ValueError, UnicodeDecodeError):
-            pass  # Not hex
-
-    # Hash anything else
-    return hashlib.sha256(keyfile_data).digest()
-
-
 def derive_composite_key(
     password: str | None = None,
     keyfile_data: bytes | None = None,
@@ -513,7 +452,7 @@ def derive_composite_key(
             parts.append(pwd_hash.data)
 
         if keyfile_data is not None:
-            key_bytes = _process_keyfile(keyfile_data)
+            key_bytes = parse_keyfile(keyfile_data)
             parts.append(key_bytes)
 
         if yubikey_response is not None:

@@ -54,6 +54,12 @@ from .exceptions import (
 )
 from .models import Attachment, Entry, Group, HistoryEntry, Times
 from .security import AesKdfConfig, Argon2Config, Cipher, KdfType
+from .security.keyfile import (
+    KeyFileVersion,
+    create_keyfile,
+    create_keyfile_bytes,
+    parse_keyfile,
+)
 from .security.yubikey import (
     YubiKeyConfig,
     check_slot_configured,
@@ -74,6 +80,11 @@ __all__ = [
     "Times",
     "Cipher",
     "KdfType",
+    # Keyfile support
+    "KeyFileVersion",
+    "create_keyfile",
+    "create_keyfile_bytes",
+    "parse_keyfile",
     # YubiKey support
     "YubiKeyConfig",
     "check_slot_configured",

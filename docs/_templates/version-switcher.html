@@ -1,13 +1,41 @@
 <div class="version-switcher">
-  <select onchange="if(this.value) window.location.href=this.value">
-    <option value="" disabled>Version</option>
-    {% for version in defined_versions %}
-    <option value="{{ version.url }}" {% if version.version == current_version %}selected{% endif %}>
-      {{ version.name }}
-    </option>
-    {% endfor %}
+  <select id="version-select" onchange="if(this.value) window.location.href=this.value">
+    <option value="" disabled selected>Loading...</option>
   </select>
 </div>
+
+<script>
+(function() {
+  // Determine current version from URL path
+  const path = window.location.pathname;
+  const match = path.match(/\/kdbxtool\/([^\/]+)\//);
+  const currentVersion = match ? match[1] : 'latest';
+
+  // Fetch versions.json from site root
+  const baseUrl = window.location.origin + '/kdbxtool';
+  fetch(baseUrl + '/versions.json')
+    .then(response => response.json())
+    .then(versions => {
+      const select = document.getElementById('version-select');
+      select.innerHTML = '';
+
+      versions.forEach(v => {
+        const option = document.createElement('option');
+        option.value = baseUrl + '/' + v.version + '/';
+        option.textContent = v.name;
+        if (v.version === currentVersion) {
+          option.selected = true;
+        }
+        select.appendChild(option);
+      });
+    })
+    .catch(() => {
+      // Fallback if versions.json fails to load
+      const select = document.getElementById('version-select');
+      select.innerHTML = '<option selected>latest</option>';
+    });
+})();
+</script>
 
 <style>
 .version-switcher {

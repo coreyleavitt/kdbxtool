@@ -70,6 +70,34 @@ db.root_group.create_entry(title="First Entry", username="me", password="secret"
 db.save("my-vault.kdbx")
 ```
 
+## Keyfile Support
+
+kdbxtool supports all KeePass keyfile formats for two-factor authentication:
+
+```python
+from kdbxtool import Database, create_keyfile, KeyFileVersion
+
+# Create a new keyfile (XML v2.0 recommended)
+create_keyfile("vault.keyx")  # Default: XML v2.0 with hash verification
+
+# Other formats available
+create_keyfile("vault.key", version=KeyFileVersion.XML_V1)   # Legacy XML
+create_keyfile("vault.key", version=KeyFileVersion.RAW_32)   # Raw 32 bytes
+create_keyfile("vault.key", version=KeyFileVersion.HEX_64)   # Hex-encoded
+
+# Open a database with password + keyfile
+with Database.open("vault.kdbx", password="my-password", keyfile="vault.keyx") as db:
+    print(f"Entries: {len(db.find_entries())}")
+
+# Create a new database with keyfile protection
+db = Database.create(password="my-password", keyfile="vault.keyx")
+db.save("protected.kdbx")
+
+# Keyfile-only authentication (no password)
+db = Database.create(keyfile="vault.keyx")
+db.save("keyfile-only.kdbx")
+```
+
 ## YubiKey Support
 
 kdbxtool supports YubiKey HMAC-SHA1 challenge-response authentication, compatible with KeePassXC:

@@ -104,13 +104,11 @@ kdbxtool supports YubiKey HMAC-SHA1 challenge-response authentication, compatibl
 
 ```python
 from kdbxtool import Database
-from kdbxtool.security import list_yubikeys, is_yubikey_available
+from kdbxtool.security import list_yubikeys
 
-# Check YubiKey availability
-if is_yubikey_available():
-    devices = list_yubikeys()
-    for device in devices:
-        print(f"Found: {device['name']} (serial: {device.get('serial', 'N/A')})")
+# List connected YubiKeys (raises YubiKeyNotAvailableError if yubikey-manager not installed)
+for device in list_yubikeys():
+    print(f"Found: {device['name']} (serial: {device.get('serial', 'N/A')})")
 
 # Open a YubiKey-protected database
 with Database.open("vault.kdbx", password="my-password", yubikey_slot=2) as db:

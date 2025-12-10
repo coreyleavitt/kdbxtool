@@ -25,12 +25,12 @@ jobs:
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.conclusion == 'success'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
 
       - name: Install dependencies
         run: uv sync --group docs
@@ -39,7 +39,7 @@ jobs:
         run: uv run sphinx-build -b html docs docs/_build/html
 
       - name: Upload docs artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: docs-latest
           path: docs/_build/html/
@@ -52,7 +52,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Download docs artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: docs-latest
           path: deploy/latest/
@@ -60,7 +60,7 @@ jobs:
       # Download CI reports from the workflow that triggered us
       - name: Download coverage report
         if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: coverage-report
           path: deploy/reports/coverage/
@@ -69,7 +69,7 @@ jobs:
 
       - name: Download mypy report
         if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: mypy-report
           path: deploy/reports/mypy/
@@ -158,10 +158,10 @@ jobs:
           rm -f deploy/versions.json.old
 
       - name: Setup Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: deploy/
 

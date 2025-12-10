@@ -80,12 +80,11 @@ email_group.create_entry(
 ## YubiKey Authentication
 
 ```python
-from kdbxtool import Database, is_yubikey_available, list_yubikeys
+from kdbxtool import Database, list_yubikeys
 
-# Check YubiKey availability
-if is_yubikey_available():
-    devices = list_yubikeys()
-    print(f"Found {len(devices)} YubiKey(s)")
+# List connected YubiKeys (raises YubiKeyNotAvailableError if yubikey-manager not installed)
+for device in list_yubikeys():
+    print(f"Found: {device['name']}")
 
 # Open with YubiKey (slot 2 recommended)
 with Database.open("vault.kdbx", password="secret", yubikey_slot=2) as db:

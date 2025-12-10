@@ -195,14 +195,14 @@ class TestParseKeyfile:
 
     def test_parse_raw_32(self) -> None:
         """Test parsing raw 32-byte keyfile."""
-        key_bytes = b"\xAB" * 32
+        key_bytes = b"\xab" * 32
 
         result = parse_keyfile(key_bytes)
         assert result == key_bytes
 
     def test_parse_hex_64(self) -> None:
         """Test parsing hex-encoded keyfile."""
-        key_bytes = b"\xCD" * 32
+        key_bytes = b"\xcd" * 32
         hex_data = key_bytes.hex().encode("ascii")
 
         result = parse_keyfile(hex_data)

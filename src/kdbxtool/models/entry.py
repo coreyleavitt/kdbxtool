@@ -190,6 +190,68 @@ class Entry:
             self.strings["otp"] = StringField("otp", protected=True)
         self.strings["otp"].value = value
 
+    def totp(self, *, at: datetime | float | None = None) -> "TotpCode | None":
+        """Generate current TOTP code from the entry's otp field.
+
+        Supports both standard otpauth:// URIs and KeePassXC legacy format
+        (TOTP Seed / TOTP Settings custom fields).
+
+        Args:
+            at: Optional timestamp for code generation. Can be a datetime
+                or Unix timestamp float. Defaults to current time.
+
+        Returns:
+            TotpCode object with code and expiration info, or None if no OTP configured.
+
+        Raises:
+            ValueError: If OTP configuration is invalid
+
+        Example:
+            >>> result = entry.totp()
+            >>> print(f"Code: {result.code}")
+            Code: 123456
+
+            >>> print(f"Expires in {result.remaining}s")
+            Expires in 15s
+
+            >>> # TotpCode also works as a string
+            >>> print(result)
+            123456
+        """
+        from ..security.totp import (
+            TotpCode,
+            generate_totp,
+            parse_keepassxc_legacy,
+            parse_otpauth_uri,
+        )
+
+        # Try standard otp field first (otpauth:// URI)
+        otp_value = self.otp
+        if otp_value and otp_value.startswith("otpauth://"):
+            config = parse_otpauth_uri(otp_value)
+        # Try KeePassXC legacy fields
+        elif self.strings.get("TOTP Seed"):
+            seed = self.strings["TOTP Seed"].value
+            if not seed:
+                return None
+            settings = None
+            if self.strings.get("TOTP Settings"):
+                settings = self.strings["TOTP Settings"].value
+            config = parse_keepassxc_legacy(seed, settings)
+        else:
+            # No OTP configured
+            return None
+
+        # Convert datetime to timestamp if needed
+        timestamp: float | None = None
+        if at is not None:
+            if isinstance(at, datetime):
+                timestamp = at.timestamp()
+            else:
+                timestamp = at
+
+        return generate_totp(config, timestamp)
+
     @property
     def custom_icon(self) -> uuid_module.UUID | None:
         """Get or set custom icon by UUID or name.

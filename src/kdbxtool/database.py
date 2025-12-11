@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import binascii
 import contextlib
+import getpass
 import hashlib
 import os
 import uuid as uuid_module
@@ -27,6 +28,7 @@ from Cryptodome.Cipher import ChaCha20, Salsa20
 from defusedxml import ElementTree as DefusedET
 
 from .exceptions import (
+    AuthenticationError,
     DatabaseError,
     InvalidXmlError,
     Kdbx3UpgradeRequired,
@@ -278,6 +280,33 @@ class Database:
                 pass
             self._transformed_key = None
 
+    def dump(self) -> str:
+        """Return a human-readable summary of the database for debugging.
+
+        Returns:
+            Multi-line string with database metadata and statistics.
+        """
+        lines = [f'Database: "{self._settings.database_name or "(unnamed)"}"']
+        lines.append(f"  Format: KDBX{self._header.version.value}")
+        lines.append(f"  Cipher: {self._header.cipher.name}")
+        lines.append(f"  KDF: {self._header.kdf_type.name}")
+
+        # Count entries and groups
+        entry_count = sum(1 for _ in self._root_group.iter_entries(recursive=True))
+        group_count = sum(1 for _ in self._root_group.iter_groups(recursive=True))
+        lines.append(f"  Total entries: {entry_count}")
+        lines.append(f"  Total groups: {group_count}")
+
+        # Custom icons
+        if self.custom_icons:
+            lines.append(f"  Custom icons: {len(self.custom_icons)}")
+
+        # Recycle bin
+        if self._settings.recycle_bin_enabled:
+            lines.append("  Recycle bin: enabled")
+
+        return "\n".join(lines)
+
     @property
     def transformed_key(self) -> bytes | None:
         """Get the transformed key for caching.
@@ -378,6 +407,68 @@ class Database:
             yubikey_slot=yubikey_slot,
             yubikey_serial=yubikey_serial,
         )
+
+    @classmethod
+    def open_interactive(
+        cls,
+        filepath: str | Path,
+        keyfile: str | Path | None = None,
+        yubikey_slot: int | None = None,
+        yubikey_serial: int | None = None,
+        prompt: str = "Password: ",
+        max_attempts: int = 3,
+    ) -> Database:
+        """Open a KDBX database with interactive password prompt.
+
+        Prompts the user for a password using secure input (no echo). If the
+        password is incorrect, allows retrying up to max_attempts times.
+
+        This is a convenience method for CLI applications that need to securely
+        prompt for database credentials.
+
+        Args:
+            filepath: Path to the .kdbx file
+            keyfile: Path to keyfile (optional)
+            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional)
+            yubikey_serial: Serial number of specific YubiKey to use
+            prompt: Custom prompt string (default: "Password: ")
+            max_attempts: Maximum password attempts before raising (default: 3)
+
+        Returns:
+            Database instance
+
+        Raises:
+            FileNotFoundError: If file or keyfile doesn't exist
+            AuthenticationError: If max_attempts exceeded with wrong password
+            YubiKeyError: If YubiKey operation fails
+
+        Example:
+            >>> db = Database.open_interactive("vault.kdbx")
+            Password:
+            >>> db = Database.open_interactive("vault.kdbx", keyfile="vault.key")
+            Password:
+        """
+        import sys
+
+        for attempt in range(max_attempts):
+            password = getpass.getpass(prompt)
+            try:
+                return cls.open(
+                    filepath,
+                    password=password,
+                    keyfile=keyfile,
+                    yubikey_slot=yubikey_slot,
+                    yubikey_serial=yubikey_serial,
+                )
+            except AuthenticationError:
+                if attempt < max_attempts - 1:
+                    print("Invalid password, try again.", file=sys.stderr)
+                else:
+                    raise AuthenticationError(
+                        f"Authentication failed after {max_attempts} attempts"
+                    )
+        # This should never be reached due to the raise in the loop
+        raise AuthenticationError(f"Authentication failed after {max_attempts} attempts")
 
     @classmethod
     def open_bytes(
@@ -1084,7 +1175,8 @@ class Database:
         uuid: uuid_module.UUID | None = None,
         path: list[str] | str | None = None,
         recursive: bool = True,
-    ) -> list[Group]:
+        first: bool = False,
+    ) -> list[Group] | Group | None:
         """Find groups matching criteria.
 
         Args:
@@ -1093,19 +1185,28 @@ class Database:
             path: Path to group as list of group names or as a '/'-separated
                 string. When specified, other criteria are ignored.
             recursive: Search in nested subgroups
+            first: If True, return first matching group or None instead of list
 
         Returns:
-            List of matching groups
+            List of matching groups, or single Group/None if first=True
         """
         # Path-based search
         if path is not None:
-            return self._find_group_by_path(path)
+            results = self._find_group_by_path(path)
+            if first:
+                return results[0] if results else None
+            return results
 
         if uuid is not None:
             group = self._root_group.find_group_by_uuid(uuid, recursive=recursive)
+            if first:
+                return group
             return [group] if group else []
 
-        return self._root_group.find_groups(name=name, recursive=recursive)
+        results = self._root_group.find_groups(name=name, recursive=recursive)
+        if first:
+            return results[0] if results else None
+        return results
 
     def _find_group_by_path(self, path: list[str] | str) -> list[Group]:
         """Find group by path.

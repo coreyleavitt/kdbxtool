@@ -669,3 +669,185 @@ class TestProtectedValueRoundtrip:
 
         e = db2.find_entries(title="Unicode")[0]
         assert e.password == "pässwörd123!@#日本語"
+
+
+class TestFindGroupsFirst:
+    """Tests for find_groups() with first parameter."""
+
+    def test_find_groups_first_returns_single(self) -> None:
+        """Test find_groups(first=True) returns single group."""
+        db = Database.create(password="test")
+        db.root_group.create_subgroup(name="Group1")
+        db.root_group.create_subgroup(name="Group2")
+
+        # first=True should return single group or None
+        result = db.find_groups(name="Group1", first=True)
+        assert isinstance(result, Group)
+        assert result.name == "Group1"
+
+    def test_find_groups_first_no_match_returns_none(self) -> None:
+        """Test find_groups(first=True) returns None when no match."""
+        db = Database.create(password="test")
+        result = db.find_groups(name="NonExistent", first=True)
+        assert result is None
+
+    def test_find_groups_first_false_returns_list(self) -> None:
+        """Test find_groups(first=False) returns list."""
+        db = Database.create(password="test")
+        db.root_group.create_subgroup(name="Group1")
+        db.root_group.create_subgroup(name="Group2")
+
+        result = db.find_groups(first=False)
+        assert isinstance(result, list)
+        # Root group plus two subgroups
+        assert len(result) >= 2
+
+    def test_group_find_groups_first(self) -> None:
+        """Test Group.find_groups() with first parameter."""
+        db = Database.create(password="test")
+        parent = db.root_group.create_subgroup(name="Parent")
+        parent.create_subgroup(name="Child1")
+        parent.create_subgroup(name="Child2")
+
+        result = parent.find_groups(name="Child1", first=True)
+        assert isinstance(result, Group)
+        assert result.name == "Child1"
+
+
+class TestDumpMethods:
+    """Tests for dump() debug helper methods."""
+
+    def test_database_dump(self) -> None:
+        """Test Database.dump() returns formatted string."""
+        db = Database.create(password="test", database_name="TestVault")
+        db.root_group.create_entry(title="Entry1", username="user1")
+        db.root_group.create_entry(title="Entry2", username="user2")
+        db.root_group.create_subgroup(name="Subgroup")
+
+        dump = db.dump()
+        assert isinstance(dump, str)
+        assert "TestVault" in dump
+        assert "KDBX" in dump
+        assert "entries: 2" in dump.lower()
+        assert "groups: 2" in dump.lower()
+
+    def test_entry_dump(self) -> None:
+        """Test Entry.dump() returns formatted string."""
+        db = Database.create(password="test")
+        entry = db.root_group.create_entry(
+            title="TestEntry",
+            username="testuser",
+            url="https://example.com",
+        )
+        entry.tags = "tag1, tag2"
+
+        dump = entry.dump()
+        assert isinstance(dump, str)
+        assert "TestEntry" in dump
+        assert "testuser" in dump
+        assert "example.com" in dump
+        assert "tag1" in dump
+
+    def test_group_dump(self) -> None:
+        """Test Group.dump() returns formatted string."""
+        db = Database.create(password="test")
+        group = db.root_group.create_subgroup(name="TestGroup")
+        group.create_entry(title="Entry1")
+        group.create_entry(title="Entry2")
+        group.create_subgroup(name="SubGroup")
+
+        dump = group.dump()
+        assert isinstance(dump, str)
+        assert "TestGroup" in dump
+        assert "Entries: 2" in dump
+        assert "Subgroups: 1" in dump
+
+    def test_group_dump_recursive(self) -> None:
+        """Test Group.dump(recursive=True) includes children."""
+        db = Database.create(password="test")
+        group = db.root_group.create_subgroup(name="Parent")
+        group.create_entry(title="EntryInParent")
+        child = group.create_subgroup(name="Child")
+        child.create_entry(title="EntryInChild")
+
+        dump = group.dump(recursive=True)
+        assert "Parent" in dump
+        assert "Child" in dump
+        assert "EntryInParent" in dump
+        assert "EntryInChild" in dump
+
+
+class TestOpenInteractive:
+    """Tests for Database.open_interactive() method."""
+
+    def test_open_interactive_success(self, tmp_path: Path) -> None:
+        """Test open_interactive with correct password."""
+        from unittest.mock import patch
+
+        db_path = tmp_path / "test.kdbx"
+        db = Database.create(password="correct")
+        db.root_group.create_entry(title="Test")
+        db.save(db_path)
+
+        with patch("getpass.getpass", return_value="correct"):
+            db2 = Database.open_interactive(db_path)
+            assert db2 is not None
+            entries = db2.find_entries(title="Test")
+            assert len(entries) == 1
+
+    def test_open_interactive_retry_then_success(self, tmp_path: Path) -> None:
+        """Test open_interactive with retry on wrong password."""
+        from unittest.mock import patch
+
+        db_path = tmp_path / "test.kdbx"
+        db = Database.create(password="correct")
+        db.save(db_path)
+
+        # First two calls return wrong password, third returns correct
+        with patch("getpass.getpass", side_effect=["wrong1", "wrong2", "correct"]):
+            with patch("builtins.print"):  # Suppress retry message
+                db2 = Database.open_interactive(db_path, max_attempts=3)
+                assert db2 is not None
+
+    def test_open_interactive_max_attempts_exceeded(self, tmp_path: Path) -> None:
+        """Test open_interactive raises after max_attempts."""
+        from unittest.mock import patch
+
+        db_path = tmp_path / "test.kdbx"
+        db = Database.create(password="correct")
+        db.save(db_path)
+
+        with patch("getpass.getpass", return_value="wrong"):
+            with patch("builtins.print"):  # Suppress retry messages
+                with pytest.raises(AuthenticationError, match="3 attempts"):
+                    Database.open_interactive(db_path, max_attempts=3)
+
+    def test_open_interactive_with_keyfile(self, tmp_path: Path) -> None:
+        """Test open_interactive with keyfile."""
+        from unittest.mock import patch
+
+        db_path = tmp_path / "test.kdbx"
+        key_path = tmp_path / "test.key"
+
+        # Create a simple keyfile
+        key_path.write_bytes(os.urandom(32))
+
+        db = Database.create(password="pass", keyfile=key_path)
+        db.save(db_path)
+
+        with patch("getpass.getpass", return_value="pass"):
+            db2 = Database.open_interactive(db_path, keyfile=key_path)
+            assert db2 is not None
+
+    def test_open_interactive_custom_prompt(self, tmp_path: Path) -> None:
+        """Test open_interactive uses custom prompt."""
+        from unittest.mock import patch
+
+        db_path = tmp_path / "test.kdbx"
+        db = Database.create(password="test")
+        db.save(db_path)
+
+        mock_getpass = patch("getpass.getpass", return_value="test")
+        with mock_getpass as m:
+            Database.open_interactive(db_path, prompt="Enter vault password: ")
+            m.assert_called_with("Enter vault password: ")

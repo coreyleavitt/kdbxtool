@@ -663,7 +663,8 @@ class Group:
         lines = [f'Group: "{path_str}"']
         lines.append(f"  UUID: {self.uuid}")
         if self.notes:
-            lines.append(f"  Notes: {self.notes[:50]}..." if len(self.notes or "") > 50 else f"  Notes: {self.notes}")
+            notes_display = f"{self.notes[:50]}..." if len(self.notes) > 50 else self.notes
+            lines.append(f"  Notes: {notes_display}")
         lines.append(f"  Entries: {len(self.entries)}")
         lines.append(f"  Subgroups: {len(self.subgroups)}")
         lines.append(f"  Created: {self.times.creation_time}")

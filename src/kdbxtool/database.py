@@ -287,9 +287,10 @@ class Database:
             Multi-line string with database metadata and statistics.
         """
         lines = [f'Database: "{self._settings.database_name or "(unnamed)"}"']
-        lines.append(f"  Format: KDBX{self._header.version.value}")
-        lines.append(f"  Cipher: {self._header.cipher.name}")
-        lines.append(f"  KDF: {self._header.kdf_type.name}")
+        if self._header is not None:
+            lines.append(f"  Format: KDBX{self._header.version.value}")
+            lines.append(f"  Cipher: {self._header.cipher.name}")
+            lines.append(f"  KDF: {self._header.kdf_type.name}")
 
         # Count entries and groups
         entry_count = sum(1 for _ in self._root_group.iter_entries(recursive=True))
@@ -466,7 +467,7 @@ class Database:
                 else:
                     raise AuthenticationError(
                         f"Authentication failed after {max_attempts} attempts"
-                    )
+                    ) from None
         # This should never be reached due to the raise in the loop
         raise AuthenticationError(f"Authentication failed after {max_attempts} attempts")
 
@@ -1203,10 +1204,14 @@ class Database:
                 return group
             return [group] if group else []
 
-        results = self._root_group.find_groups(name=name, recursive=recursive)
+        # find_groups with first=False always returns list
+        group_results = cast(
+            list[Group],
+            self._root_group.find_groups(name=name, recursive=recursive),
+        )
         if first:
-            return results[0] if results else None
-        return results
+            return group_results[0] if group_results else None
+        return group_results
 
     def _find_group_by_path(self, path: list[str] | str) -> list[Group]:
         """Find group by path.

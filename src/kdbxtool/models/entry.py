@@ -11,6 +11,7 @@ from .times import Times
 
 if TYPE_CHECKING:
     from ..database import Database
+    from ..security.totp import TotpCode
     from .group import Group
 
 
@@ -190,7 +191,7 @@ class Entry:
             self.strings["otp"] = StringField("otp", protected=True)
         self.strings["otp"].value = value
 
-    def totp(self, *, at: datetime | float | None = None) -> "TotpCode | None":
+    def totp(self, *, at: datetime | float | None = None) -> TotpCode | None:
         """Generate current TOTP code from the entry's otp field.
 
         Supports both standard otpauth:// URIs and KeePassXC legacy format
@@ -219,7 +220,6 @@ class Entry:
             123456
         """
         from ..security.totp import (
-            TotpCode,
             generate_totp,
             parse_keepassxc_legacy,
             parse_otpauth_uri,
@@ -245,10 +245,7 @@ class Entry:
         # Convert datetime to timestamp if needed
         timestamp: float | None = None
         if at is not None:
-            if isinstance(at, datetime):
-                timestamp = at.timestamp()
-            else:
-                timestamp = at
+            timestamp = at.timestamp() if isinstance(at, datetime) else at
 
         return generate_totp(config, timestamp)
 

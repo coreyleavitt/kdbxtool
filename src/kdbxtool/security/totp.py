@@ -12,7 +12,7 @@ import hmac
 import struct
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -45,7 +45,7 @@ class TotpCode:
     def expires_at(self) -> datetime:
         """Datetime when this code expires."""
         period_start = int(self.generated_at) // self.period * self.period
-        return datetime.fromtimestamp(period_start + self.period, tz=timezone.utc)
+        return datetime.fromtimestamp(period_start + self.period, tz=UTC)
 
     @property
     def is_expired(self) -> bool:

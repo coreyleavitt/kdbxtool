@@ -42,6 +42,7 @@ from .exceptions import (
     Kdbx3UpgradeRequired,
     KdbxError,
     KdfError,
+    MergeError,
     MissingCredentialsError,
     TwofishNotAvailableError,
     UnknownCipherError,
@@ -52,6 +53,7 @@ from .exceptions import (
     YubiKeySlotError,
     YubiKeyTimeoutError,
 )
+from .merge import DeletedObject, MergeMode, MergeResult
 from .models import Attachment, Entry, Group, HistoryEntry, Times
 from .security import AesKdfConfig, Argon2Config, Cipher, KdfType
 from .security.keyfile import (
@@ -79,6 +81,10 @@ __all__ = [
     "Times",
     "Cipher",
     "KdfType",
+    # Merge support
+    "MergeMode",
+    "MergeResult",
+    "DeletedObject",
     # Keyfile support
     "KeyFileVersion",
     "create_keyfile",
@@ -103,6 +109,7 @@ __all__ = [
     "CredentialError",
     "InvalidPasswordError",
     "InvalidKeyFileError",
+    "MergeError",
     "MissingCredentialsError",
     "DatabaseError",
     "EntryNotFoundError",

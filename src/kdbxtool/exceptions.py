@@ -317,3 +317,14 @@ class Kdbx3UpgradeRequired(DatabaseError):
             "Saving a KDBX3 database will upgrade it to KDBX4 format. "
             "Use save(allow_upgrade=True) to confirm, or save to a different file."
         )
+
+
+class MergeError(DatabaseError):
+    """Error during database merge operation.
+
+    Raised when a merge operation fails due to incompatible databases,
+    invalid state, or other merge-specific issues.
+    """
+
+    def __init__(self, message: str = "Merge operation failed") -> None:
+        super().__init__(message)

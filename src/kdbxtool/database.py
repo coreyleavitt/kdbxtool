@@ -21,8 +21,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 from xml.etree.ElementTree import Element, SubElement, tostring
+
+if TYPE_CHECKING:
+    from .merge import DeletedObject, MergeMode, MergeResult
 
 from Cryptodome.Cipher import ChaCha20, Salsa20
 from defusedxml import ElementTree as DefusedET
@@ -170,6 +173,7 @@ class DatabaseSettings:
     history_max_items: int = 10
     history_max_size: int = 6 * 1024 * 1024  # 6 MiB
     custom_icons: dict[uuid_module.UUID, CustomIcon] = field(default_factory=dict)
+    deleted_objects: list[DeletedObject] = field(default_factory=list)
 
 
 class Database:
@@ -307,6 +311,45 @@ class Database:
             lines.append("  Recycle bin: enabled")
 
         return "\n".join(lines)
+
+    def merge(
+        self,
+        source: Database,
+        *,
+        mode: MergeMode | None = None,
+    ) -> MergeResult:
+        """Merge another database into this one.
+
+        Combines entries, groups, history, attachments, and custom icons
+        from the source database into this database using UUID-based
+        matching and timestamp-based conflict resolution.
+
+        Args:
+            source: Database to merge from (read-only)
+            mode: Merge mode (STANDARD or SYNCHRONIZE). Defaults to STANDARD.
+                - STANDARD: Add and update only, never deletes
+                - SYNCHRONIZE: Full sync including deletions
+
+        Returns:
+            MergeResult with counts and statistics about the merge
+
+        Raises:
+            MergeError: If merge cannot be completed
+
+        Example:
+            >>> target_db = Database.open("main.kdbx", password="secret")
+            >>> source_db = Database.open("branch.kdbx", password="secret")
+            >>> result = target_db.merge(source_db)
+            >>> print(f"Added {result.entries_added} entries")
+            >>> target_db.save()
+        """
+        from .merge import MergeMode, Merger
+
+        if mode is None:
+            mode = MergeMode.STANDARD
+
+        merger = Merger(self, source, mode=mode)
+        return merger.merge()
 
     @property
     def transformed_key(self) -> bytes | None:

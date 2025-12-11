@@ -486,6 +486,31 @@ class Entry:
         value = getattr(self, field.lower())
         return self._database.deref(value)
 
+    def dump(self) -> str:
+        """Return a human-readable summary of the entry for debugging.
+
+        Returns:
+            Multi-line string with entry details (passwords are masked).
+        """
+        lines = [f'Entry: "{self.title}" ({self.username})']
+        lines.append(f"  UUID: {self.uuid}")
+        if self.url:
+            lines.append(f"  URL: {self.url}")
+        if self.tags:
+            lines.append(f"  Tags: {self.tags}")
+        lines.append(f"  Created: {self.times.creation_time}")
+        lines.append(f"  Modified: {self.times.last_modification_time}")
+        if self.times.expires:
+            lines.append(f"  Expires: {self.times.expiry_time}")
+        custom_count = len(self.custom_properties)
+        if custom_count > 0:
+            lines.append(f"  Custom fields: {custom_count}")
+        if self.binaries:
+            lines.append(f"  Attachments: {len(self.binaries)}")
+        if self.history:
+            lines.append(f"  History: {len(self.history)} versions")
+        return "\n".join(lines)
+
     def __str__(self) -> str:
         return f'Entry: "{self.title}" ({self.username})'
 

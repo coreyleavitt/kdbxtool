@@ -627,22 +627,57 @@ class Group:
         self,
         name: str | None = None,
         recursive: bool = True,
-    ) -> list[Group]:
+        first: bool = False,
+    ) -> list[Group] | Group | None:
         """Find groups matching criteria.
 
         Args:
             name: Match groups with this name (exact)
             recursive: Search in nested subgroups
+            first: If True, return first matching group or None instead of list
 
         Returns:
-            List of matching groups
+            List of matching groups, or single Group/None if first=True
         """
-        results = []
+        results: list[Group] = []
         for group in self.iter_groups(recursive=recursive):
             if name is not None and group.name != name:
                 continue
+            if first:
+                return group
             results.append(group)
+        if first:
+            return None
         return results
+
+    def dump(self, recursive: bool = False) -> str:
+        """Return a human-readable summary of the group for debugging.
+
+        Args:
+            recursive: If True, include subgroups and entries recursively
+
+        Returns:
+            Multi-line string with group details.
+        """
+        path_str = "/".join(self.path) if self.path else "(root)"
+        lines = [f'Group: "{path_str}"']
+        lines.append(f"  UUID: {self.uuid}")
+        if self.notes:
+            lines.append(f"  Notes: {self.notes[:50]}..." if len(self.notes or "") > 50 else f"  Notes: {self.notes}")
+        lines.append(f"  Entries: {len(self.entries)}")
+        lines.append(f"  Subgroups: {len(self.subgroups)}")
+        lines.append(f"  Created: {self.times.creation_time}")
+        lines.append(f"  Modified: {self.times.last_modification_time}")
+
+        if recursive:
+            for entry in self.entries:
+                for line in entry.dump().split("\n"):
+                    lines.append("  " + line)
+            for subgroup in self.subgroups:
+                for line in subgroup.dump(recursive=True).split("\n"):
+                    lines.append("  " + line)
+
+        return "\n".join(lines)
 
     def __str__(self) -> str:
         path_str = "/".join(self.path) if self.path else "(root)"

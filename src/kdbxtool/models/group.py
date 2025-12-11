@@ -13,6 +13,7 @@ from .times import Times
 
 if TYPE_CHECKING:
     from ..database import Database
+    from ..templates import EntryTemplate
 
 
 @dataclass
@@ -221,6 +222,8 @@ class Group:
         url: str | None = None,
         notes: str | None = None,
         tags: list[str] | None = None,
+        *,
+        template: EntryTemplate | None = None,
     ) -> Entry:
         """Create and add a new entry to this group.
 
@@ -231,18 +234,67 @@ class Group:
             url: URL
             notes: Notes
             tags: Tags
+            template: Optional entry template instance with field values
 
         Returns:
             Newly created entry
+
+        Example:
+            >>> # Standard entry (no template)
+            >>> entry = group.create_entry(title="Site", username="user", password="pass")
+
+            >>> # Using a template with typed fields
+            >>> from kdbxtool import Templates
+            >>> entry = group.create_entry(
+            ...     title="My Visa",
+            ...     template=Templates.CreditCard(
+            ...         card_number="4111111111111111",
+            ...         expiry_date="12/25",
+            ...         cvv="123",
+            ...     ),
+            ... )
+
+            >>> # Server template with standard fields
+            >>> entry = group.create_entry(
+            ...     title="prod-server",
+            ...     username="admin",
+            ...     password="secret",
+            ...     template=Templates.Server(
+            ...         hostname="192.168.1.1",
+            ...         port="22",
+            ...     ),
+            ... )
         """
+        from .entry import StringField
+
+        # Determine icon and whether to include standard fields
+        icon_id = "0"
+        include_standard = True
+        if template is not None:
+            icon_id = str(template._icon_id)
+            include_standard = template._include_standard
+
+        # Create base entry
         entry = Entry.create(
             title=title,
-            username=username,
-            password=password,
-            url=url,
+            username=username if include_standard else None,
+            password=password if include_standard else None,
+            url=url if include_standard else None,
             notes=notes,
             tags=tags,
+            icon_id=icon_id,
         )
+
+        # Add template fields from the template instance
+        if template is not None:
+            for display_name, (value, is_protected) in template._get_fields().items():
+                if value is not None:
+                    entry.strings[display_name] = StringField(
+                        key=display_name,
+                        value=value,
+                        protected=is_protected,
+                    )
+
         return self.add_entry(entry)
 
     # --- Subgroup management ---

@@ -191,15 +191,9 @@ class TestGenerateTotp:
         secret = b"12345678901234567890"
         timestamp = 59.0
 
-        code_sha1 = generate_totp(
-            TotpConfig(secret=secret, algorithm="SHA1"), timestamp
-        ).code
-        code_sha256 = generate_totp(
-            TotpConfig(secret=secret, algorithm="SHA256"), timestamp
-        ).code
-        code_sha512 = generate_totp(
-            TotpConfig(secret=secret, algorithm="SHA512"), timestamp
-        ).code
+        code_sha1 = generate_totp(TotpConfig(secret=secret, algorithm="SHA1"), timestamp).code
+        code_sha256 = generate_totp(TotpConfig(secret=secret, algorithm="SHA256"), timestamp).code
+        code_sha512 = generate_totp(TotpConfig(secret=secret, algorithm="SHA512"), timestamp).code
 
         # All should be different
         assert code_sha1 != code_sha256

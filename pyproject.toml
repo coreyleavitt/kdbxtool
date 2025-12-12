@@ -72,6 +72,9 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "S", "B", "C4", "PIE", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]  # Allow assert and hardcoded passwords in tests
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --cov=kdbxtool --cov-report=term-missing"

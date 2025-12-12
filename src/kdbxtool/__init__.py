@@ -67,6 +67,7 @@ from .security.yubikey import (
     check_slot_configured,
     list_yubikeys,
 )
+from .templates import EntryTemplate, IconId, Templates
 
 __all__ = [
     # Core classes
@@ -85,6 +86,10 @@ __all__ = [
     "MergeMode",
     "MergeResult",
     "DeletedObject",
+    # Entry templates
+    "EntryTemplate",
+    "IconId",
+    "Templates",
     # Keyfile support
     "KeyFileVersion",
     "create_keyfile",

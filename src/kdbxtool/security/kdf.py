@@ -179,18 +179,21 @@ class Argon2Config:
         cls,
         salt: bytes | None = None,
         variant: KdfType = KdfType.ARGON2D,
+        iterations: int = 10,
     ) -> Argon2Config:
         """Create configuration for high-security applications.
 
         Use for sensitive data where longer unlock times are acceptable.
         Provides stronger protection against brute-force attacks.
 
-        Parameters: 256 MiB memory, 10 iterations, 4 parallelism
+        Parameters: 256 MiB memory, 10 iterations (configurable), 4 parallelism
 
         Args:
             salt: Optional salt (32 random bytes generated if not provided)
             variant: Argon2 variant (ARGON2D or ARGON2ID). Default is ARGON2D
                 which provides better GPU resistance for local password databases.
+            iterations: Number of iterations (default: 10). Higher values increase
+                security but also unlock time.
 
         Returns:
             Argon2Config with high security parameters
@@ -201,7 +204,7 @@ class Argon2Config:
             salt = os.urandom(32)
         return cls(
             memory_kib=256 * 1024,  # 256 MiB
-            iterations=10,
+            iterations=iterations,
             parallelism=4,
             salt=salt,
             variant=variant,

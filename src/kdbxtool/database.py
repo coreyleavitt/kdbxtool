@@ -44,8 +44,7 @@ from .parsing import CompressionType, KdbxHeader, KdbxVersion
 from .parsing.kdbx3 import read_kdbx3
 from .parsing.kdbx4 import InnerHeader, read_kdbx4, write_kdbx4
 from .security import AesKdfConfig, Argon2Config, Cipher, KdfType
-from .security import yubikey as yubikey_module
-from .security.yubikey import YubiKeyConfig, compute_challenge_response
+from .security.challenge_response import ChallengeResponseProvider
 
 # Union type for KDF configurations
 KdfConfig = Argon2Config | AesKdfConfig
@@ -228,8 +227,7 @@ class Database:
         self._keyfile_data: bytes | None = None
         self._transformed_key: bytes | None = None
         self._filepath: Path | None = None
-        self._yubikey_slot: int | None = None
-        self._yubikey_serial: int | None = None
+        self._challenge_response_provider: ChallengeResponseProvider | None = None
         # Set database reference on all entries and groups
         self._set_database_references(root_group)
 
@@ -406,8 +404,7 @@ class Database:
         filepath: str | Path,
         password: str | None = None,
         keyfile: str | Path | None = None,
-        yubikey_slot: int | None = None,
-        yubikey_serial: int | None = None,
+        challenge_response_provider: ChallengeResponseProvider | None = None,
     ) -> Database:
         """Open an existing KDBX database.
 
@@ -415,12 +412,11 @@ class Database:
             filepath: Path to the .kdbx file
             password: Database password
             keyfile: Path to keyfile (optional)
-            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
-                If provided, the database's KDF salt is used as challenge and
-                the 20-byte HMAC-SHA1 response is incorporated into key derivation.
-                Requires yubikey-manager package: pip install kdbxtool[yubikey]
-            yubikey_serial: Serial number of specific YubiKey to use when multiple
-                devices are connected. Use list_yubikeys() to discover serials.
+            challenge_response_provider: Optional challenge-response provider
+                for hardware-backed authentication (e.g., YubiKey).
+                The provider's challenge_response() method is called with the
+                database's KDF salt, and the response is incorporated into
+                key derivation.
 
         Returns:
             Database instance
@@ -428,7 +424,7 @@ class Database:
         Raises:
             FileNotFoundError: If file doesn't exist
             ValueError: If credentials are wrong or file is corrupted
-            YubiKeyError: If YubiKey operation fails
+            ChallengeResponseError: If challenge-response operation fails
         """
         filepath = Path(filepath)
         if not filepath.exists():
@@ -448,8 +444,7 @@ class Database:
             password=password,
             keyfile_data=keyfile_data,
             filepath=filepath,
-            yubikey_slot=yubikey_slot,
-            yubikey_serial=yubikey_serial,
+            challenge_response_provider=challenge_response_provider,
         )
 
     @classmethod
@@ -457,8 +452,7 @@ class Database:
         cls,
         filepath: str | Path,
         keyfile: str | Path | None = None,
-        yubikey_slot: int | None = None,
-        yubikey_serial: int | None = None,
+        challenge_response_provider: ChallengeResponseProvider | None = None,
         prompt: str = "Password: ",
         max_attempts: int = 3,
     ) -> Database:
@@ -473,8 +467,8 @@ class Database:
         Args:
             filepath: Path to the .kdbx file
             keyfile: Path to keyfile (optional)
-            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional)
-            yubikey_serial: Serial number of specific YubiKey to use
+            challenge_response_provider: Optional challenge-response provider
+                for hardware-backed authentication (e.g., YubiKey).
             prompt: Custom prompt string (default: "Password: ")
             max_attempts: Maximum password attempts before raising (default: 3)
 
@@ -484,7 +478,7 @@ class Database:
         Raises:
             FileNotFoundError: If file or keyfile doesn't exist
             AuthenticationError: If max_attempts exceeded with wrong password
-            YubiKeyError: If YubiKey operation fails
+            ChallengeResponseError: If challenge-response operation fails
 
         Example:
             >>> db = Database.open_interactive("vault.kdbx")
@@ -501,8 +495,7 @@ class Database:
                     filepath,
                     password=password,
                     keyfile=keyfile,
-                    yubikey_slot=yubikey_slot,
-                    yubikey_serial=yubikey_serial,
+                    challenge_response_provider=challenge_response_provider,
                 )
             except AuthenticationError:
                 if attempt < max_attempts - 1:
@@ -522,8 +515,7 @@ class Database:
         keyfile_data: bytes | None = None,
         filepath: Path | None = None,
         transformed_key: bytes | None = None,
-        yubikey_slot: int | None = None,
-        yubikey_serial: int | None = None,
+        challenge_response_provider: ChallengeResponseProvider | None = None,
     ) -> Database:
         """Open a KDBX database from bytes.
 
@@ -536,33 +528,27 @@ class Database:
             keyfile_data: Keyfile contents (optional)
             filepath: Original file path (for save)
             transformed_key: Precomputed transformed key (skips KDF, faster opens)
-            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
-                If provided, the database's KDF salt is used as challenge and
-                the 20-byte HMAC-SHA1 response is incorporated into key derivation.
-                Requires yubikey-manager package: pip install kdbxtool[yubikey]
-            yubikey_serial: Serial number of specific YubiKey to use when multiple
-                devices are connected. Use list_yubikeys() to discover serials.
+            challenge_response_provider: Optional challenge-response provider
+                for hardware-backed authentication (e.g., YubiKey).
+                The provider's challenge_response() method is called with the
+                database's KDF salt, and the response is incorporated into
+                key derivation.
 
         Returns:
             Database instance
 
         Raises:
-            YubiKeyError: If YubiKey operation fails
+            ChallengeResponseError: If challenge-response operation fails
         """
         # Detect version from header (parse just enough to get version)
         header, _ = KdbxHeader.parse(data)
 
-        # Get YubiKey response if slot specified
+        # Get challenge-response if provider specified
         # KeePassXC uses the KDF salt as the challenge, not master_seed
-        yubikey_response: bytes | None = None
-        if yubikey_slot is not None:
-            if not yubikey_module.YUBIKEY_AVAILABLE:
-                from .exceptions import YubiKeyNotAvailableError
-
-                raise YubiKeyNotAvailableError()
-            config = YubiKeyConfig(slot=yubikey_slot, serial=yubikey_serial)
-            response = compute_challenge_response(header.kdf_salt, config)
-            yubikey_response = response.data
+        challenge_response: bytes | None = None
+        if challenge_response_provider is not None:
+            response = challenge_response_provider.challenge_response(header.kdf_salt)
+            challenge_response = response.data
 
         # Decrypt the file using appropriate reader
         is_kdbx3 = header.version == KdbxVersion.KDBX3
@@ -576,11 +562,11 @@ class Database:
                 UserWarning,
                 stacklevel=3,
             )
-            # KDBX3 doesn't support YubiKey CR in the same way
+            # KDBX3 doesn't support challenge-response in the same way
             # (KeeChallenge used a sidecar XML file, not integrated)
-            if yubikey_slot is not None:
+            if challenge_response_provider is not None:
                 raise DatabaseError(
-                    "YubiKey challenge-response is not supported for KDBX3 databases. "
+                    "Challenge-response authentication is not supported for KDBX3 databases. "
                     "Upgrade to KDBX4 first."
                 )
             payload = read_kdbx3(
@@ -595,7 +581,7 @@ class Database:
                 password=password,
                 keyfile_data=keyfile_data,
                 transformed_key=transformed_key,
-                yubikey_response=yubikey_response,
+                yubikey_response=challenge_response,
             )
 
         # Parse XML into models (with protected value decryption)
@@ -613,8 +599,7 @@ class Database:
         db._transformed_key = payload.transformed_key
         db._filepath = filepath
         db._opened_as_kdbx3 = is_kdbx3
-        db._yubikey_slot = yubikey_slot
-        db._yubikey_serial = yubikey_serial
+        db._challenge_response_provider = challenge_response_provider
 
         return db
 
@@ -787,8 +772,7 @@ class Database:
         regenerate_seeds: bool = True,
         kdf_config: KdfConfig | None = None,
         cipher: Cipher | None = None,
-        yubikey_slot: int | None = None,
-        yubikey_serial: int | None = None,
+        challenge_response_provider: ChallengeResponseProvider | None = None,
     ) -> None:
         """Save the database to a file.
 
@@ -812,17 +796,15 @@ class Database:
                 - Cipher.CHACHA20 (modern, faster in software)
                 - Cipher.TWOFISH256_CBC (requires oxifish package)
                 If not specified, preserves existing cipher.
-            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
-                If provided (or if database was opened with yubikey_slot), the new
-                KDF salt is used as challenge and the response is incorporated
-                into key derivation. Requires yubikey-manager package.
-            yubikey_serial: Serial number of specific YubiKey to use when multiple
-                devices are connected. Use list_yubikeys() to discover serials.
+            challenge_response_provider: Optional challenge-response provider
+                for hardware-backed authentication (e.g., YubiKey). If provided
+                (or if database was opened with a provider), the new KDF salt is
+                used as challenge and the response is incorporated into key derivation.
 
         Raises:
             DatabaseError: If no filepath specified and database wasn't opened from file
             Kdbx3UpgradeRequired: If saving KDBX3 to original file without allow_upgrade=True
-            YubiKeyError: If YubiKey operation fails
+            ChallengeResponseError: If challenge-response operation fails
         """
         save_to_new_file = filepath is not None
         if filepath:
@@ -835,26 +817,24 @@ class Database:
         if was_kdbx3 and not save_to_new_file and not allow_upgrade:
             raise Kdbx3UpgradeRequired()
 
-        # Use provided yubikey params, or fall back to stored ones
-        effective_yubikey_slot = yubikey_slot if yubikey_slot is not None else self._yubikey_slot
-        effective_yubikey_serial = (
-            yubikey_serial if yubikey_serial is not None else self._yubikey_serial
+        # Use provided provider, or fall back to stored one
+        effective_provider = (
+            challenge_response_provider
+            if challenge_response_provider is not None
+            else self._challenge_response_provider
         )
 
         data = self.to_bytes(
             regenerate_seeds=regenerate_seeds,
             kdf_config=kdf_config,
             cipher=cipher,
-            yubikey_slot=effective_yubikey_slot,
-            yubikey_serial=effective_yubikey_serial,
+            challenge_response_provider=effective_provider,
         )
         self._filepath.write_bytes(data)
 
-        # Update stored yubikey params if changed
-        if yubikey_slot is not None:
-            self._yubikey_slot = yubikey_slot
-        if yubikey_serial is not None:
-            self._yubikey_serial = yubikey_serial
+        # Update stored provider if changed
+        if challenge_response_provider is not None:
+            self._challenge_response_provider = challenge_response_provider
 
         # After KDBX3 upgrade, reload to get proper KDBX4 state (including transformed_key)
         if was_kdbx3:
@@ -885,6 +865,7 @@ class Database:
             password=self._password,
             keyfile_data=self._keyfile_data,
             filepath=self._filepath,
+            challenge_response_provider=self._challenge_response_provider,
         )
 
         # Copy all state from reloaded database
@@ -964,8 +945,7 @@ class Database:
         regenerate_seeds: bool = True,
         kdf_config: KdfConfig | None = None,
         cipher: Cipher | None = None,
-        yubikey_slot: int | None = None,
-        yubikey_serial: int | None = None,
+        challenge_response_provider: ChallengeResponseProvider | None = None,
     ) -> bytes:
         """Serialize the database to KDBX4 format.
 
@@ -987,25 +967,23 @@ class Database:
                 - Cipher.CHACHA20 (modern, faster in software)
                 - Cipher.TWOFISH256_CBC (requires oxifish package)
                 If not specified, preserves existing cipher.
-            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
-                If provided, the (new) KDF salt is used as challenge and the
-                20-byte HMAC-SHA1 response is incorporated into key derivation.
-                Requires yubikey-manager package: pip install kdbxtool[yubikey]
-            yubikey_serial: Serial number of specific YubiKey to use when multiple
-                devices are connected. Use list_yubikeys() to discover serials.
+            challenge_response_provider: Optional challenge-response provider
+                for hardware-backed authentication (e.g., YubiKey). If provided,
+                the (new) KDF salt is used as challenge and the response is
+                incorporated into key derivation.
 
         Returns:
             KDBX4 file contents as bytes
 
         Raises:
             MissingCredentialsError: If no credentials are set
-            YubiKeyError: If YubiKey operation fails
+            ChallengeResponseError: If challenge-response operation fails
         """
-        # Need either credentials, a transformed key, or YubiKey
+        # Need either credentials, a transformed key, or challenge-response provider
         has_credentials = self._password is not None or self._keyfile_data is not None
         has_transformed_key = self._transformed_key is not None
-        has_yubikey = yubikey_slot is not None
-        if not has_credentials and not has_transformed_key and not has_yubikey:
+        has_cr_provider = challenge_response_provider is not None
+        if not has_credentials and not has_transformed_key and not has_cr_provider:
             raise MissingCredentialsError()
 
         if self._header is None:
@@ -1035,17 +1013,12 @@ class Database:
             # Cached transformed_key is now invalid (salt changed)
             self._transformed_key = None
 
-        # Get YubiKey response if slot specified
+        # Get challenge-response if provider specified
         # KeePassXC uses the KDF salt as the challenge, not master_seed
-        yubikey_response: bytes | None = None
-        if yubikey_slot is not None:
-            if not yubikey_module.YUBIKEY_AVAILABLE:
-                from .exceptions import YubiKeyNotAvailableError
-
-                raise YubiKeyNotAvailableError()
-            config = YubiKeyConfig(slot=yubikey_slot, serial=yubikey_serial)
-            response = compute_challenge_response(self._header.kdf_salt, config)
-            yubikey_response = response.data
+        challenge_response: bytes | None = None
+        if challenge_response_provider is not None:
+            response = challenge_response_provider.challenge_response(self._header.kdf_salt)
+            challenge_response = response.data
 
         # Sync binaries to inner header (preserve protection flags where possible)
         existing_binaries = self._inner_header.binaries
@@ -1072,7 +1045,7 @@ class Database:
             password=self._password,
             keyfile_data=self._keyfile_data,
             transformed_key=self._transformed_key,
-            yubikey_response=yubikey_response,
+            yubikey_response=challenge_response,
         )
 
     def set_credentials(

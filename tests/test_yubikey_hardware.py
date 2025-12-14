@@ -18,13 +18,13 @@ import os
 
 import pytest
 
-from kdbxtool.security.yubikey import YUBIKEY_AVAILABLE
+from kdbxtool.security.yubikey import YUBIKEY_HARDWARE_AVAILABLE
 
 # Skip entire module if yubikey-manager not installed
 pytestmark = [
     pytest.mark.hardware,
     pytest.mark.skipif(
-        not YUBIKEY_AVAILABLE,
+        not YUBIKEY_HARDWARE_AVAILABLE,
         reason="yubikey-manager not installed",
     ),
 ]
@@ -40,7 +40,7 @@ def get_test_yubikey_config() -> tuple[int, int | None]:
 
 def yubikey_connected() -> bool:
     """Check if a YubiKey is actually connected."""
-    if not YUBIKEY_AVAILABLE:
+    if not YUBIKEY_HARDWARE_AVAILABLE:
         return False
     try:
         from kdbxtool.security.yubikey import list_yubikeys
@@ -149,9 +149,11 @@ class TestDatabaseYubiKeyHardware:
         from pathlib import Path
 
         from kdbxtool import Database
+        from kdbxtool.security.yubikey import HardwareYubiKey
 
         slot, serial = get_test_yubikey_config()
         db_path = Path(str(tmp_path)) / "yubikey_test.kdbx"
+        provider = HardwareYubiKey(slot=slot, serial=serial)
 
         # Create database and save with YubiKey
         db = Database.create(password="testpassword")
@@ -160,14 +162,13 @@ class TestDatabaseYubiKeyHardware:
             username="testuser",
             password="testpass",
         )
-        db.save(db_path, yubikey_slot=slot, yubikey_serial=serial)
+        db.save(db_path, challenge_response_provider=provider)
 
         # Reopen with YubiKey
         db2 = Database.open(
             db_path,
             password="testpassword",
-            yubikey_slot=slot,
-            yubikey_serial=serial,
+            challenge_response_provider=provider,
         )
 
         entries = db2.find_entries(title="Test Entry")
@@ -178,20 +179,21 @@ class TestDatabaseYubiKeyHardware:
     def test_bytes_roundtrip(self) -> None:
         """Test to_bytes/open_bytes with YubiKey."""
         from kdbxtool import Database
+        from kdbxtool.security.yubikey import HardwareYubiKey
 
         slot, serial = get_test_yubikey_config()
+        provider = HardwareYubiKey(slot=slot, serial=serial)
 
         # Create and serialize with YubiKey
         db = Database.create(password="testpassword")
         db.root_group.create_entry(title="Roundtrip Test", username="user")
-        data = db.to_bytes(yubikey_slot=slot, yubikey_serial=serial)
+        data = db.to_bytes(challenge_response_provider=provider)
 
         # Deserialize
         db2 = Database.open_bytes(
             data,
             password="testpassword",
-            yubikey_slot=slot,
-            yubikey_serial=serial,
+            challenge_response_provider=provider,
         )
 
         entries = db2.find_entries(title="Roundtrip Test")
@@ -203,21 +205,22 @@ class TestDatabaseYubiKeyHardware:
 
         from kdbxtool import Database
         from kdbxtool.exceptions import AuthenticationError
+        from kdbxtool.security.yubikey import HardwareYubiKey
 
         slot, serial = get_test_yubikey_config()
         db_path = Path(str(tmp_path)) / "yubikey_test.kdbx"
+        provider = HardwareYubiKey(slot=slot, serial=serial)
 
         # Create database
         db = Database.create(password="correctpassword")
-        db.save(db_path, yubikey_slot=slot, yubikey_serial=serial)
+        db.save(db_path, challenge_response_provider=provider)
 
         # Try to open with wrong password
         with pytest.raises(AuthenticationError):
             Database.open(
                 db_path,
                 password="wrongpassword",
-                yubikey_slot=slot,
-                yubikey_serial=serial,
+                challenge_response_provider=provider,
             )
 
     def test_missing_yubikey_fails(self, tmp_path: pytest.TempPathFactory) -> None:
@@ -226,13 +229,15 @@ class TestDatabaseYubiKeyHardware:
 
         from kdbxtool import Database
         from kdbxtool.exceptions import AuthenticationError
+        from kdbxtool.security.yubikey import HardwareYubiKey
 
         slot, serial = get_test_yubikey_config()
         db_path = Path(str(tmp_path)) / "yubikey_test.kdbx"
+        provider = HardwareYubiKey(slot=slot, serial=serial)
 
         # Create database with YubiKey
         db = Database.create(password="testpassword")
-        db.save(db_path, yubikey_slot=slot, yubikey_serial=serial)
+        db.save(db_path, challenge_response_provider=provider)
 
         # Try to open without YubiKey (password only)
         with pytest.raises(AuthenticationError):
@@ -243,21 +248,22 @@ class TestDatabaseYubiKeyHardware:
         from pathlib import Path
 
         from kdbxtool import Database
+        from kdbxtool.security.yubikey import HardwareYubiKey
 
         slot, serial = get_test_yubikey_config()
         db_path = Path(str(tmp_path)) / "yubikey_modify.kdbx"
+        provider = HardwareYubiKey(slot=slot, serial=serial)
 
         # Create initial database
         db = Database.create(password="testpassword")
         db.root_group.create_entry(title="Original Entry", username="user1")
-        db.save(db_path, yubikey_slot=slot, yubikey_serial=serial)
+        db.save(db_path, challenge_response_provider=provider)
 
         # Reopen and modify
         db2 = Database.open(
             db_path,
             password="testpassword",
-            yubikey_slot=slot,
-            yubikey_serial=serial,
+            challenge_response_provider=provider,
         )
         db2.root_group.create_entry(title="New Entry", username="user2")
         db2.save()
@@ -266,8 +272,7 @@ class TestDatabaseYubiKeyHardware:
         db3 = Database.open(
             db_path,
             password="testpassword",
-            yubikey_slot=slot,
-            yubikey_serial=serial,
+            challenge_response_provider=provider,
         )
         entries = db3.find_entries()
         assert len(entries) == 2

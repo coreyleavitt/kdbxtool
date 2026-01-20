@@ -278,3 +278,89 @@ class TestKdfConfigOnUpgrade:
             assert db2.find_entries(title="Test", first=True) is not None
         finally:
             filepath.unlink(missing_ok=True)
+
+
+class TestKdfConfigOnKdbx4:
+    """Tests for changing KDF settings on existing KDBX4 databases (issue #64)."""
+
+    def test_change_kdf_config_on_kdbx4(self) -> None:
+        """Test that kdf_config is applied when saving KDBX4 databases."""
+        db = Database.create(password="test", kdf_config=Argon2Config.fast())
+        db.root_group.create_entry(title="Test Entry")
+
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+        assert db2._header is not None
+        assert db2._header.argon2_memory_kib == 16 * 1024  # fast = 16 MiB
+
+        # Change to high_security config
+        data2 = db2.to_bytes(kdf_config=Argon2Config.high_security())
+        db3 = Database.open_bytes(data2, password="test")
+        assert db3._header is not None
+        assert db3._header.argon2_memory_kib == 256 * 1024  # high_security = 256 MiB
+        assert db3._header.argon2_iterations == 10
+        assert db3.find_entries(title="Test Entry", first=True) is not None
+
+    def test_switch_argon2_to_aes_kdf(self) -> None:
+        """Test switching from Argon2 to AES-KDF on KDBX4 database."""
+        db = Database.create(password="test", kdf_config=Argon2Config.fast())
+        db.root_group.create_entry(title="Test Entry")
+
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+        assert db2._header is not None
+        assert db2._header.kdf_type == KdfType.ARGON2D
+
+        # Switch to AES-KDF
+        data2 = db2.to_bytes(kdf_config=AesKdfConfig.fast())
+        db3 = Database.open_bytes(data2, password="test")
+        assert db3._header is not None
+        assert db3._header.kdf_type == KdfType.AES_KDF
+        assert db3._header.aes_kdf_rounds == 60_000
+        assert db3.find_entries(title="Test Entry", first=True) is not None
+
+    def test_switch_aes_kdf_to_argon2(self) -> None:
+        """Test switching from AES-KDF to Argon2 on KDBX4 database."""
+        db = Database.create(password="test", kdf_config=AesKdfConfig.fast())
+        db.root_group.create_entry(title="Test Entry")
+
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+        assert db2._header is not None
+        assert db2._header.kdf_type == KdfType.AES_KDF
+
+        # Switch to Argon2
+        data2 = db2.to_bytes(kdf_config=Argon2Config.fast())
+        db3 = Database.open_bytes(data2, password="test")
+        assert db3._header is not None
+        assert db3._header.kdf_type == KdfType.ARGON2D
+        assert db3._header.argon2_memory_kib == 16 * 1024
+        assert db3.find_entries(title="Test Entry", first=True) is not None
+
+    def test_kdf_change_preserves_all_data(self) -> None:
+        """Test that changing KDF preserves entries, groups, and passwords."""
+        db = Database.create(password="test", kdf_config=Argon2Config.fast())
+        group = db.root_group.create_subgroup(name="Test Group")
+        group.create_entry(
+            title="Test Entry",
+            username="testuser",
+            password="secretpass",
+            url="https://example.com",
+        )
+
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+
+        # Change KDF
+        data2 = db2.to_bytes(kdf_config=AesKdfConfig.standard())
+        db3 = Database.open_bytes(data2, password="test")
+        assert db3._header is not None
+        assert db3._header.kdf_type == KdfType.AES_KDF
+
+        # Verify all data preserved
+        found = db3.find_entries(title="Test Entry", first=True)
+        assert found is not None
+        assert found.username == "testuser"
+        assert found.password == "secretpass"
+        assert found.url == "https://example.com"
+        assert len(list(db3.find_groups(name="Test Group"))) == 1

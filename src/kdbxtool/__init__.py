@@ -22,7 +22,9 @@ Example:
     db.save()
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import version
+
+__version__ = version("kdbxtool")
 
 from .database import Database, DatabaseSettings
 from .exceptions import (

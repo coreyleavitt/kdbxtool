@@ -418,12 +418,13 @@ def derive_composite_key(
     keyfile_data: bytes | None = None,
     yubikey_response: bytes | None = None,
 ) -> SecureBytes:
-    """Create composite key from password, keyfile, and/or YubiKey response.
+    """Create composite key from password, keyfile, and/or challenge-response.
 
     The composite key is SHA-256(password_hash || keyfile_key || challenge_result).
 
-    KeePassXC-compatible YubiKey handling:
-    - The YubiKey response (20 bytes HMAC-SHA1) is SHA-256 hashed
+    Challenge-response handling (KeePassXC-compatible):
+    - YubiKey HMAC-SHA1 response (20 bytes) is SHA-256 hashed
+    - FIDO2 hmac-secret response (32 bytes) is SHA-256 hashed
     - This hash is appended to the other key components before final SHA-256
     - The challenge used to obtain the response should be the KDF salt
 
@@ -432,7 +433,9 @@ def derive_composite_key(
     Args:
         password: Optional password string
         keyfile_data: Optional keyfile contents
-        yubikey_response: Optional 20-byte YubiKey HMAC-SHA1 response
+        yubikey_response: Optional challenge-response output:
+            - 20 bytes for YubiKey HMAC-SHA1
+            - 32 bytes for FIDO2 hmac-secret
 
     Returns:
         32-byte composite key wrapped in SecureBytes
@@ -444,9 +447,11 @@ def derive_composite_key(
     if password is None and keyfile_data is None and yubikey_response is None:
         raise MissingCredentialsError()
 
-    if yubikey_response is not None and len(yubikey_response) != 20:
+    # Accept 20 bytes (YubiKey HMAC-SHA1) or 32 bytes (FIDO2 hmac-secret)
+    if yubikey_response is not None and len(yubikey_response) not in (20, 32):
         raise ValueError(
-            f"YubiKey response must be 20 bytes (HMAC-SHA1), got {len(yubikey_response)}"
+            f"Challenge response must be 20 bytes (YubiKey) or 32 bytes (FIDO2), "
+            f"got {len(yubikey_response)}"
         )
 
     logger.debug(

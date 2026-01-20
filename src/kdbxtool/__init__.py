@@ -28,12 +28,18 @@ from importlib.metadata import version
 from .database import Database, DatabaseSettings
 from .exceptions import (
     AuthenticationError,
+    ChallengeResponseError,
     CorruptedDataError,
     CredentialError,
     CryptoError,
     DatabaseError,
     DecryptionError,
     EntryNotFoundError,
+    Fido2CredentialNotFoundError,
+    Fido2DeviceNotFoundError,
+    Fido2Error,
+    Fido2NotAvailableError,
+    Fido2PinRequiredError,
     FormatError,
     GroupNotFoundError,
     InvalidKeyFileError,
@@ -63,7 +69,17 @@ from .security.keyfile import (
     create_keyfile_bytes,
     parse_keyfile,
 )
+from .security.challenge_response import ChallengeResponseProvider
+from .security.fido2 import (
+    FIDO2_AVAILABLE,
+    Fido2HmacSecret,
+    YubiKeyFido2,
+    create_fido2_credential,
+    list_fido2_devices,
+)
 from .security.yubikey import (
+    YUBIKEY_HARDWARE_AVAILABLE,
+    YubiKeyHmacSha1,
     YubiKeyConfig,
     check_slot_configured,
     list_yubikeys,
@@ -102,7 +118,16 @@ __all__ = [
     "create_keyfile",
     "create_keyfile_bytes",
     "parse_keyfile",
-    # YubiKey support
+    # Challenge-Response Providers
+    "ChallengeResponseProvider",
+    "YubiKeyHmacSha1",
+    "Fido2HmacSecret",
+    "YubiKeyFido2",
+    "create_fido2_credential",
+    "YUBIKEY_HARDWARE_AVAILABLE",
+    "FIDO2_AVAILABLE",
+    "list_fido2_devices",
+    # YubiKey support (legacy)
     "YubiKeyConfig",
     "check_slot_configured",
     "list_yubikeys",
@@ -128,9 +153,16 @@ __all__ = [
     "GroupNotFoundError",
     "InvalidXmlError",
     "Kdbx3UpgradeRequired",
+    # Challenge-Response Exceptions
+    "ChallengeResponseError",
     "YubiKeyError",
     "YubiKeyNotAvailableError",
     "YubiKeyNotFoundError",
     "YubiKeySlotError",
     "YubiKeyTimeoutError",
+    "Fido2Error",
+    "Fido2NotAvailableError",
+    "Fido2DeviceNotFoundError",
+    "Fido2CredentialNotFoundError",
+    "Fido2PinRequiredError",
 ]

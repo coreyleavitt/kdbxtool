@@ -18,13 +18,13 @@ import os
 
 import pytest
 
-from kdbxtool.security.yubikey import YUBIKEY_AVAILABLE
+from kdbxtool.security.yubikey import YUBIKEY_HARDWARE_AVAILABLE
 
 # Skip entire module if yubikey-manager not installed
 pytestmark = [
     pytest.mark.hardware,
     pytest.mark.skipif(
-        not YUBIKEY_AVAILABLE,
+        not YUBIKEY_HARDWARE_AVAILABLE,
         reason="yubikey-manager not installed",
     ),
 ]
@@ -40,7 +40,7 @@ def get_test_yubikey_config() -> tuple[int, int | None]:
 
 def yubikey_connected() -> bool:
     """Check if a YubiKey is actually connected."""
-    if not YUBIKEY_AVAILABLE:
+    if not YUBIKEY_HARDWARE_AVAILABLE:
         return False
     try:
         from kdbxtool.security.yubikey import list_yubikeys
@@ -75,56 +75,58 @@ class TestYubiKeyHardware:
         if "serial" in device:
             assert isinstance(device["serial"], int)
 
-    def test_challenge_response(self) -> None:
-        """Test HMAC-SHA1 challenge-response with real YubiKey."""
-        from kdbxtool.security.yubikey import (
-            YubiKeyConfig,
-            compute_challenge_response,
-        )
+    def test_hardware_yubikey_provider(self) -> None:
+        """Test YubiKeyHmacSha1 provider with real YubiKey."""
+        from kdbxtool import YubiKeyHmacSha1
 
         slot, serial = get_test_yubikey_config()
-        config = YubiKeyConfig(slot=slot, serial=serial)
+        provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)
 
         # Send a test challenge
         challenge = os.urandom(32)
-        response = compute_challenge_response(challenge, config)
+        response = provider.challenge_response(challenge)
 
         # Response should be 20 bytes (HMAC-SHA1 output)
         assert len(response.data) == 20
 
-    def test_challenge_response_deterministic(self) -> None:
+    def test_hardware_yubikey_deterministic(self) -> None:
         """Test that same challenge produces same response."""
-        from kdbxtool.security.yubikey import (
-            YubiKeyConfig,
-            compute_challenge_response,
-        )
+        from kdbxtool import YubiKeyHmacSha1
 
         slot, serial = get_test_yubikey_config()
-        config = YubiKeyConfig(slot=slot, serial=serial)
+        provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)
 
         challenge = os.urandom(32)
-        response1 = compute_challenge_response(challenge, config)
-        response2 = compute_challenge_response(challenge, config)
+        response1 = provider.challenge_response(challenge)
+        response2 = provider.challenge_response(challenge)
 
         assert response1.data == response2.data
 
-    def test_different_challenges_different_responses(self) -> None:
+    def test_hardware_yubikey_different_challenges(self) -> None:
         """Test that different challenges produce different responses."""
-        from kdbxtool.security.yubikey import (
-            YubiKeyConfig,
-            compute_challenge_response,
-        )
+        from kdbxtool import YubiKeyHmacSha1
 
         slot, serial = get_test_yubikey_config()
-        config = YubiKeyConfig(slot=slot, serial=serial)
+        provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)
 
         challenge1 = os.urandom(32)
         challenge2 = os.urandom(32)
 
-        response1 = compute_challenge_response(challenge1, config)
-        response2 = compute_challenge_response(challenge2, config)
+        response1 = provider.challenge_response(challenge1)
+        response2 = provider.challenge_response(challenge2)
 
         assert response1.data != response2.data
+
+    def test_hardware_yubikey_requires_touch_property(self) -> None:
+        """Test YubiKeyHmacSha1 requires_touch property."""
+        from kdbxtool import YubiKeyHmacSha1
+
+        slot, serial = get_test_yubikey_config()
+        provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)
+
+        # Property should be queryable
+        requires_touch = provider.requires_touch
+        assert isinstance(requires_touch, bool)
 
     def test_check_slot_configured(self) -> None:
         """Test checking if slot is configured for HMAC-SHA1."""
@@ -148,9 +150,10 @@ class TestDatabaseYubiKeyHardware:
         """Test creating and reopening a YubiKey-protected database."""
         from pathlib import Path
 
-        from kdbxtool import Database
+        from kdbxtool import Database, YubiKeyHmacSha1
 
         slot, serial = get_test_yubikey_config()
+        provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)
         db_path = Path(str(tmp_path)) / "yubikey_test.kdbx"
 
         # Create database and save with YubiKey
@@ -160,14 +163,13 @@ class TestDatabaseYubiKeyHardware:
             username="testuser",
             password="testpass",
         )
-        db.save(db_path, yubikey_slot=slot, yubikey_serial=serial)
+        db.save(db_path, challenge_response_provider=provider)
 
         # Reopen with YubiKey
         db2 = Database.open(
             db_path,
             password="testpassword",
-            yubikey_slot=slot,
-            yubikey_serial=serial,
+            challenge_response_provider=provider,
         )
 
         entries = db2.find_entries(title="Test Entry")
@@ -177,21 +179,21 @@ class TestDatabaseYubiKeyHardware:
 
     def test_bytes_roundtrip(self) -> None:
         """Test to_bytes/open_bytes with YubiKey."""
-        from kdbxtool import Database
+        from kdbxtool import Database, YubiKeyHmacSha1
 
         slot, serial = get_test_yubikey_config()
+        provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)
 
         # Create and serialize with YubiKey
         db = Database.create(password="testpassword")
         db.root_group.create_entry(title="Roundtrip Test", username="user")
-        data = db.to_bytes(yubikey_slot=slot, yubikey_serial=serial)
+        data = db.to_bytes(challenge_response_provider=provider)
 
         # Deserialize
         db2 = Database.open_bytes(
             data,
             password="testpassword",
-            yubikey_slot=slot,
-            yubikey_serial=serial,
+            challenge_response_provider=provider,
         )
 
         entries = db2.find_entries(title="Roundtrip Test")
@@ -201,38 +203,39 @@ class TestDatabaseYubiKeyHardware:
         """Test that wrong password fails even with correct YubiKey."""
         from pathlib import Path
 
-        from kdbxtool import Database
+        from kdbxtool import Database, YubiKeyHmacSha1
         from kdbxtool.exceptions import AuthenticationError
 
         slot, serial = get_test_yubikey_config()
+        provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)
         db_path = Path(str(tmp_path)) / "yubikey_test.kdbx"
 
         # Create database
         db = Database.create(password="correctpassword")
-        db.save(db_path, yubikey_slot=slot, yubikey_serial=serial)
+        db.save(db_path, challenge_response_provider=provider)
 
         # Try to open with wrong password
         with pytest.raises(AuthenticationError):
             Database.open(
                 db_path,
                 password="wrongpassword",
-                yubikey_slot=slot,
-                yubikey_serial=serial,
+                challenge_response_provider=provider,
             )
 
     def test_missing_yubikey_fails(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that opening without YubiKey fails."""
         from pathlib import Path
 
-        from kdbxtool import Database
+        from kdbxtool import Database, YubiKeyHmacSha1
         from kdbxtool.exceptions import AuthenticationError
 
         slot, serial = get_test_yubikey_config()
+        provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)
         db_path = Path(str(tmp_path)) / "yubikey_test.kdbx"
 
         # Create database with YubiKey
         db = Database.create(password="testpassword")
-        db.save(db_path, yubikey_slot=slot, yubikey_serial=serial)
+        db.save(db_path, challenge_response_provider=provider)
 
         # Try to open without YubiKey (password only)
         with pytest.raises(AuthenticationError):
@@ -242,32 +245,31 @@ class TestDatabaseYubiKeyHardware:
         """Test modifying and resaving a YubiKey-protected database."""
         from pathlib import Path
 
-        from kdbxtool import Database
+        from kdbxtool import Database, YubiKeyHmacSha1
 
         slot, serial = get_test_yubikey_config()
+        provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)
         db_path = Path(str(tmp_path)) / "yubikey_modify.kdbx"
 
         # Create initial database
         db = Database.create(password="testpassword")
         db.root_group.create_entry(title="Original Entry", username="user1")
-        db.save(db_path, yubikey_slot=slot, yubikey_serial=serial)
+        db.save(db_path, challenge_response_provider=provider)
 
         # Reopen and modify
         db2 = Database.open(
             db_path,
             password="testpassword",
-            yubikey_slot=slot,
-            yubikey_serial=serial,
+            challenge_response_provider=provider,
         )
         db2.root_group.create_entry(title="New Entry", username="user2")
-        db2.save()
+        db2.save(challenge_response_provider=provider)
 
         # Reopen again to verify
         db3 = Database.open(
             db_path,
             password="testpassword",
-            yubikey_slot=slot,
-            yubikey_serial=serial,
+            challenge_response_provider=provider,
         )
         entries = db3.find_entries()
         assert len(entries) == 2

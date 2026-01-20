@@ -28,8 +28,10 @@ Security Notes:
 from __future__ import annotations
 
 import logging
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from kdbxtool.exceptions import (
     YubiKeyError,
@@ -50,9 +52,12 @@ try:
         YubiOtpSession,
     )
 
-    YUBIKEY_AVAILABLE = True
+    YUBIKEY_HARDWARE_AVAILABLE = True
 except ImportError:
-    YUBIKEY_AVAILABLE = False
+    YUBIKEY_HARDWARE_AVAILABLE = False
+
+# Backwards compatibility alias
+YUBIKEY_AVAILABLE = YUBIKEY_HARDWARE_AVAILABLE
 
 if TYPE_CHECKING:
     pass
@@ -63,9 +68,16 @@ logger = logging.getLogger(__name__)
 HMAC_SHA1_RESPONSE_SIZE = 20
 
 
+def DEFAULT_TOUCH_CALLBACK() -> None:
+    """Default callback that prints touch prompt to stderr."""
+    print("Touch your YubiKey...", file=sys.stderr, flush=True)
+
+
 @dataclass(frozen=True, slots=True)
 class YubiKeyConfig:
     """Configuration for YubiKey challenge-response.
+
+    Note: This class is deprecated for new code. Use YubiKeyHmacSha1 instead.
 
     Attributes:
         slot: YubiKey slot to use (1 or 2). Slot 2 is typically used for
@@ -73,20 +85,15 @@ class YubiKeyConfig:
         serial: Optional serial number to select a specific YubiKey when
             multiple devices are connected. If None, uses the first device.
             Use list_yubikeys() to discover available devices and serials.
-        timeout_seconds: Timeout for challenge-response operation in seconds.
-            If touch is required, this is the time to wait for the button press.
     """
 
     slot: int = 2
     serial: int | None = None
-    timeout_seconds: float = 15.0
 
     def __post_init__(self) -> None:
         """Validate configuration."""
         if self.slot not in (1, 2):
             raise ValueError("YubiKey slot must be 1 or 2")
-        if self.timeout_seconds <= 0:
-            raise ValueError("Timeout must be positive")
 
 
 def list_yubikeys() -> list[dict[str, str | int]]:
@@ -204,7 +211,7 @@ def compute_challenge_response(
 
         # Translate common errors to specific exceptions
         if "timeout" in error_msg or "timed out" in error_msg:
-            raise YubiKeyTimeoutError(config.timeout_seconds) from e
+            raise YubiKeyTimeoutError() from e
         if "not configured" in error_msg or "not programmed" in error_msg:
             raise YubiKeySlotError(config.slot) from e
         if "no device" in error_msg or "not found" in error_msg:
@@ -266,3 +273,199 @@ def check_slot_configured(slot: int = 2, serial: int | None = None) -> bool:
 
     except Exception:
         return False
+
+
+class YubiKeyHmacSha1:
+    """YubiKey HMAC-SHA1 challenge-response provider.
+
+    This class implements the ChallengeResponseProvider protocol for YubiKey
+    devices configured with HMAC-SHA1 challenge-response. It provides hardware-
+    backed key derivation that is compatible with KeePassXC.
+
+    The device and touch requirement are verified at initialization time
+    (fail fast), and touch prompts are shown proactively when needed.
+
+    Example:
+        >>> provider = YubiKeyHmacSha1(slot=2)
+        >>> db = Database.open("vault.kdbx", password="secret", provider=provider)
+
+        # With specific serial and custom touch callback
+        >>> provider = YubiKeyHmacSha1(
+        ...     slot=2,
+        ...     serial=12345678,
+        ...     on_touch_required=lambda: print("Please touch..."),
+        ... )
+
+        # Disable touch prompts
+        >>> provider = YubiKeyHmacSha1(slot=2, on_touch_required=None)
+
+    Attributes:
+        slot: YubiKey slot (1 or 2)
+        serial: Device serial number (if specified)
+        requires_touch: Whether the slot requires touch for challenge-response
+
+    Raises:
+        YubiKeyNotAvailableError: If yubikey-manager is not installed
+        YubiKeyNotFoundError: If no YubiKey is connected (or specified serial not found)
+        YubiKeySlotError: If the slot is not configured for HMAC-SHA1
+    """
+
+    # Sentinel value for default callback (allows distinguishing None from unset)
+    _DEFAULT_CALLBACK: Callable[[], None] | None = DEFAULT_TOUCH_CALLBACK
+
+    def __init__(
+        self,
+        slot: int = 2,
+        serial: int | None = None,
+        on_touch_required: Callable[[], None] | None = _DEFAULT_CALLBACK,
+    ) -> None:
+        """Initialize YubiKey provider.
+
+        Validates device exists and queries touch requirement at init time.
+
+        Args:
+            slot: YubiKey slot to use (1 or 2). Slot 2 is typically used for
+                challenge-response as slot 1 is often used for OTP.
+            serial: Optional serial number to select a specific YubiKey when
+                multiple devices are connected. If None, uses the first device.
+            on_touch_required: Callback invoked before operations that require
+                touch. Set to None to disable touch prompts. Default prints
+                "Touch your YubiKey..." to stderr.
+
+        Raises:
+            ValueError: If slot is not 1 or 2
+            YubiKeyNotAvailableError: If yubikey-manager is not installed
+            YubiKeyNotFoundError: If no YubiKey is connected
+            YubiKeySlotError: If the slot is not configured for HMAC-SHA1
+        """
+        if slot not in (1, 2):
+            raise ValueError("YubiKey slot must be 1 or 2")
+
+        if not YUBIKEY_HARDWARE_AVAILABLE:
+            raise YubiKeyNotAvailableError()
+
+        self._slot = slot
+        self._serial = serial
+        self._on_touch_required = on_touch_required
+
+        # Validate device exists and query touch requirement at init
+        self._device, self._device_info = self._find_device()
+        self._requires_touch = self._check_touch_required()
+
+    def _find_device(self) -> tuple[Any, Any]:
+        """Find and return the YubiKey device.
+
+        Returns:
+            Tuple of (device, device_info)
+
+        Raises:
+            YubiKeyNotFoundError: If no matching device found
+        """
+        devices = list_all_devices()
+        if not devices:
+            raise YubiKeyNotFoundError()
+
+        if self._serial is not None:
+            for dev, dev_info in devices:
+                if dev_info.serial == self._serial:
+                    return dev, dev_info
+            raise YubiKeyNotFoundError(
+                f"No YubiKey with serial {self._serial} found. "
+                f"Available serials: {[d[1].serial for d in devices if d[1].serial]}"
+            )
+
+        return devices[0]
+
+    def _check_touch_required(self) -> bool:
+        """Query if slot is configured to require touch.
+
+        Returns:
+            True if touch is required, False otherwise
+        """
+        try:
+            connection = self._device.open_connection(OtpConnection)
+            try:
+                session = YubiOtpSession(connection)
+                config_state = session.get_config_state()
+                slot_enum = SLOT.ONE if self._slot == 1 else SLOT.TWO
+
+                # Check if slot is configured
+                if not config_state.is_configured(slot_enum):
+                    raise YubiKeySlotError(self._slot)
+
+                # Check if touch is triggered for this slot
+                return bool(config_state.is_touch_triggered(slot_enum))
+            finally:
+                connection.close()
+        except YubiKeySlotError:
+            raise
+        except Exception as e:
+            # If we can't check, assume it might need touch
+            logger.debug("Could not check touch requirement: %s", e)
+            return True
+
+    @property
+    def slot(self) -> int:
+        """YubiKey slot number (1 or 2)."""
+        return self._slot
+
+    @property
+    def serial(self) -> int | None:
+        """Device serial number, if specified."""
+        return self._serial
+
+    @property
+    def requires_touch(self) -> bool:
+        """Whether this YubiKey slot requires touch for challenge-response."""
+        return self._requires_touch
+
+    def challenge_response(self, challenge: bytes) -> SecureBytes:
+        """Compute HMAC-SHA1 response for the given challenge.
+
+        Args:
+            challenge: Challenge bytes (typically 32-byte KDF salt)
+
+        Returns:
+            20-byte HMAC-SHA1 response wrapped in SecureBytes
+
+        Raises:
+            YubiKeyTimeoutError: If touch was required but not received
+            YubiKeyError: For other YubiKey communication errors
+        """
+        if not challenge:
+            raise ValueError("Challenge must not be empty")
+
+        # Prompt proactively if touch is required
+        if self._requires_touch and self._on_touch_required is not None:
+            self._on_touch_required()
+
+        slot_enum = SLOT.ONE if self._slot == 1 else SLOT.TWO
+        logger.debug("Starting YubiKey challenge-response on slot %d", self._slot)
+
+        try:
+            connection = self._device.open_connection(OtpConnection)
+            try:
+                session = YubiOtpSession(connection)
+                response = session.calculate_hmac_sha1(slot_enum, challenge)
+                logger.debug("YubiKey challenge-response complete")
+                return SecureBytes(bytes(response))
+            finally:
+                connection.close()
+
+        except Exception as e:
+            error_msg = str(e).lower()
+
+            if "timeout" in error_msg or "timed out" in error_msg:
+                raise YubiKeyTimeoutError() from e
+            if "not configured" in error_msg or "not programmed" in error_msg:
+                raise YubiKeySlotError(self._slot) from e
+            if "no device" in error_msg or "not found" in error_msg:
+                raise YubiKeyNotFoundError() from e
+
+            raise YubiKeyError(f"YubiKey challenge-response failed: {e}") from e
+
+    def __repr__(self) -> str:
+        """Return string representation."""
+        serial_str = f", serial={self._serial}" if self._serial else ""
+        touch_str = ", touch=required" if self._requires_touch else ""
+        return f"YubiKeyHmacSha1(slot={self._slot}{serial_str}{touch_str})"

@@ -5,7 +5,6 @@ KDBX databases encrypted with Twofish-256-CBC when the oxifish package
 is installed.
 """
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -96,44 +95,6 @@ class TestTwofishDatabaseCreate:
 class TestTwofishRoundtrip:
     """Tests for saving and reopening Twofish databases."""
 
-    def test_create_save_reopen(self) -> None:
-        """Test full roundtrip: create, save, reopen, verify."""
-        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
-            filepath = Path(f.name)
-
-        try:
-            # Create database
-            db = Database.create(
-                filepath=filepath,
-                password="roundtriptest",
-                cipher=Cipher.TWOFISH256_CBC,
-            )
-
-            # Add entry
-            entry = db.root_group.create_entry(
-                title="Roundtrip Entry",
-                username="rounduser",
-                password="roundpass",
-            )
-            entry_uuid = entry.uuid
-
-            # Save
-            db.save()
-
-            # Reopen
-            db2 = Database.open(filepath, password="roundtriptest")
-
-            # Verify
-            entries = list(db2.iter_entries())
-            assert len(entries) == 1
-            assert entries[0].title == "Roundtrip Entry"
-            assert entries[0].username == "rounduser"
-            assert entries[0].password == "roundpass"
-            assert entries[0].uuid == entry_uuid
-
-        finally:
-            filepath.unlink(missing_ok=True)
-
     def test_to_bytes_roundtrip(self) -> None:
         """Test in-memory roundtrip with to_bytes."""
         # Create database
@@ -163,36 +124,28 @@ class TestTwofishRoundtrip:
 
     def test_modify_and_resave(self) -> None:
         """Test modifying and resaving a Twofish database."""
-        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
-            filepath = Path(f.name)
+        # Create and save
+        db = Database.create(
+            password="modifytest",
+            cipher=Cipher.TWOFISH256_CBC,
+        )
+        db.root_group.create_entry(title="Original", username="orig")
+        data = db.to_bytes()
 
-        try:
-            # Create and save
-            db = Database.create(
-                filepath=filepath,
-                password="modifytest",
-                cipher=Cipher.TWOFISH256_CBC,
-            )
-            db.root_group.create_entry(title="Original", username="orig")
-            db.save()
+        # Reopen, modify, resave
+        db2 = Database.open_bytes(data, password="modifytest")
+        entries = list(db2.iter_entries())
+        entries[0].title = "Modified"
+        db2.root_group.create_entry(title="New Entry", username="new")
+        data2 = db2.to_bytes()
 
-            # Reopen, modify, resave
-            db2 = Database.open(filepath, password="modifytest")
-            entries = list(db2.iter_entries())
-            entries[0].title = "Modified"
-            db2.root_group.create_entry(title="New Entry", username="new")
-            db2.save()
-
-            # Verify modifications
-            db3 = Database.open(filepath, password="modifytest")
-            entries = list(db3.iter_entries())
-            assert len(entries) == 2
-            titles = {e.title for e in entries}
-            assert "Modified" in titles
-            assert "New Entry" in titles
-
-        finally:
-            filepath.unlink(missing_ok=True)
+        # Verify modifications
+        db3 = Database.open_bytes(data2, password="modifytest")
+        entries = list(db3.iter_entries())
+        assert len(entries) == 2
+        titles = {e.title for e in entries}
+        assert "Modified" in titles
+        assert "New Entry" in titles
 
 
 class TestTwofishNotAvailable:

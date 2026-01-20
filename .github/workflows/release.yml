@@ -83,10 +83,19 @@ jobs:
             VERSION=$(uv version --short)
             echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+            # Update lockfile
+            uv lock
+
             # Commit via API (signed)
             PYPROJECT_CONTENT=$(base64 -w 0 pyproject.toml)
             PYPROJECT_SHA=$(gh api repos/${{ github.repository }}/git/blobs \
               -f content="$PYPROJECT_CONTENT" \
+              -f encoding=base64 \
+              --jq '.sha')
+
+            UVLOCK_CONTENT=$(base64 -w 0 uv.lock)
+            UVLOCK_SHA=$(gh api repos/${{ github.repository }}/git/blobs \
+              -f content="$UVLOCK_CONTENT" \
               -f encoding=base64 \
               --jq '.sha')
 
@@ -96,6 +105,10 @@ jobs:
               -f 'tree[][mode]=100644' \
               -f 'tree[][type]=blob' \
               -f "tree[][sha]=$PYPROJECT_SHA" \
+              -f 'tree[][path]=uv.lock' \
+              -f 'tree[][mode]=100644' \
+              -f 'tree[][type]=blob' \
+              -f "tree[][sha]=$UVLOCK_SHA" \
               --jq '.sha')
 
             COMMIT_SHA=$(gh api repos/${{ github.repository }}/git/commits \

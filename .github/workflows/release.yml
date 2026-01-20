@@ -93,11 +93,8 @@ jobs:
               -f encoding=base64 \
               --jq '.sha')
 
-            UVLOCK_CONTENT=$(base64 -w 0 uv.lock)
-            UVLOCK_SHA=$(gh api repos/${{ github.repository }}/git/blobs \
-              -f content="$UVLOCK_CONTENT" \
-              -f encoding=base64 \
-              --jq '.sha')
+            UVLOCK_SHA=$(base64 -w 0 uv.lock | jq -Rs '{content: ., encoding: "base64"}' | \
+              gh api repos/${{ github.repository }}/git/blobs --input - --jq '.sha')
 
             TREE_SHA=$(gh api repos/${{ github.repository }}/git/trees \
               -f base_tree="${{ github.sha }}" \

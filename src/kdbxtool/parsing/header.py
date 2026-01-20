@@ -12,6 +12,7 @@ https://keepass.info/help/kb/kdbx_4.html
 from __future__ import annotations
 
 import contextlib
+import logging
 import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -26,6 +27,8 @@ from kdbxtool.exceptions import (
 from kdbxtool.security import Cipher, KdfType
 
 from .context import BuildContext, ParseContext
+
+logger = logging.getLogger(__name__)
 
 # KDBX signature bytes
 KDBX_MAGIC = bytes.fromhex("03d9a29a67fb4bb5")  # KeePass 2.x signature
@@ -167,6 +170,8 @@ class KdbxHeader:
             else:
                 raise UnsupportedVersionError(version_major, version_minor)
 
+            logger.info("Detected KDBX version %d.%d", version_major, version_minor)
+
         # Parse header fields
         header_fields: dict[HeaderFieldType, bytes] = {}
 
@@ -196,12 +201,14 @@ class KdbxHeader:
         if HeaderFieldType.CIPHER_ID not in header_fields:
             raise CorruptedDataError("Missing cipher ID in header")
         cipher = Cipher.from_uuid(header_fields[HeaderFieldType.CIPHER_ID])
+        logger.debug("Cipher: %s", cipher.display_name)
 
         # Compression (required)
         if HeaderFieldType.COMPRESSION_FLAGS not in header_fields:
             raise CorruptedDataError("Missing compression flags in header")
         compression_val = struct.unpack("<I", header_fields[HeaderFieldType.COMPRESSION_FLAGS])[0]
         compression = CompressionType(compression_val)
+        logger.debug("Compression: %s", compression.name)
 
         # Master seed (required, 32 bytes)
         if HeaderFieldType.MASTER_SEED not in header_fields:
@@ -290,6 +297,12 @@ class KdbxHeader:
             argon2_memory = memory // 1024  # Convert bytes to KiB
             argon2_iterations = iterations
             argon2_parallelism = parallelism
+            logger.debug(
+                "Argon2: memory=%d KiB, iterations=%d, parallelism=%d",
+                argon2_memory,
+                argon2_iterations,
+                argon2_parallelism,
+            )
         elif kdf_type == KdfType.AES_KDF:
             # AES-KDF parameters
             rounds = kdf_params.get("R")
@@ -298,6 +311,7 @@ class KdbxHeader:
                 raise KdfError("Missing or invalid AES-KDF rounds parameter")
 
             aes_kdf_rounds = rounds
+            logger.debug("AES-KDF rounds: %d", aes_kdf_rounds)
 
         return (
             cls(
@@ -341,6 +355,7 @@ class KdbxHeader:
         if HeaderFieldType.TRANSFORM_ROUNDS not in fields:
             raise CorruptedDataError("Missing transform rounds in KDBX3 header")
         aes_kdf_rounds = struct.unpack("<Q", fields[HeaderFieldType.TRANSFORM_ROUNDS])[0]
+        logger.debug("AES-KDF rounds: %d", aes_kdf_rounds)
 
         # Stream start bytes (for verification)
         stream_start = fields.get(HeaderFieldType.STREAM_START_BYTES)

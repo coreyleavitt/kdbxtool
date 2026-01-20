@@ -13,6 +13,7 @@ Security considerations:
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -27,6 +28,8 @@ from .memory import SecureBytes
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 class KdfType(Enum):
@@ -344,6 +347,7 @@ def derive_key_argon2(
         config.validate_security()
 
     argon2_type = Argon2Type.ID if config.variant == KdfType.ARGON2ID else Argon2Type.D
+    logger.debug("Starting Argon2 derivation (%s)", config.variant.display_name)
 
     derived = hash_secret_raw(
         secret=password,
@@ -354,6 +358,7 @@ def derive_key_argon2(
         hash_len=32,
         type=argon2_type,
     )
+    logger.debug("Argon2 derivation complete")
     return SecureBytes(derived)
 
 
@@ -379,6 +384,8 @@ def derive_key_aes_kdf(
     if len(password) != 32:
         raise KdfError("AES-KDF requires 32-byte input")
 
+    logger.debug("Starting AES-KDF with %d rounds", config.rounds)
+
     from Cryptodome.Cipher import AES
 
     cipher = AES.new(config.salt, AES.MODE_ECB)
@@ -402,6 +409,7 @@ def derive_key_aes_kdf(
     for i in range(32):
         combined[i] = 0
 
+    logger.debug("AES-KDF complete")
     return SecureBytes(derived)
 
 
@@ -440,6 +448,13 @@ def derive_composite_key(
         raise ValueError(
             f"YubiKey response must be 20 bytes (HMAC-SHA1), got {len(yubikey_response)}"
         )
+
+    logger.debug(
+        "Deriving composite key (password=%s, keyfile=%s, yubikey=%s)",
+        password is not None,
+        keyfile_data is not None,
+        yubikey_response is not None,
+    )
 
     parts: list[bytes] = []
     secure_parts: list[SecureBytes] = []

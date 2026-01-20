@@ -283,11 +283,6 @@ class TestFieldReferenceRoundtrip:
 
     def test_reference_survives_save_reload(self) -> None:
         """Test that references survive save and reload."""
-        import tempfile
-        from pathlib import Path
-
-        from kdbxtool import Argon2Config
-
         db = Database.create(password="test")
         main_entry = db.root_group.create_entry(
             title="Main",
@@ -298,24 +293,17 @@ class TestFieldReferenceRoundtrip:
             password=main_entry.ref("password"),
         )
 
-        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
-            filepath = Path(f.name)
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
 
-        try:
-            db.save(filepath=filepath, kdf_config=Argon2Config.fast())
+        ref_entry2 = db2.find_entries(title="Reference", first=True)
+        assert ref_entry2 is not None
 
-            # Reload and verify
-            db2 = Database.open(filepath, password="test")
-            ref_entry2 = db2.find_entries(title="Reference", first=True)
-            assert ref_entry2 is not None
+        # Raw value should still be the reference
+        assert "{REF:" in ref_entry2.password
 
-            # Raw value should still be the reference
-            assert "{REF:" in ref_entry2.password
-
-            # Deref should still resolve
-            assert ref_entry2.deref("password") == "original_password"
-        finally:
-            filepath.unlink(missing_ok=True)
+        # Deref should still resolve
+        assert ref_entry2.deref("password") == "original_password"
 
     def test_update_original_affects_reference(self) -> None:
         """Test that updating original entry affects referenced values."""

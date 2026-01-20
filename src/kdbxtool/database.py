@@ -624,8 +624,8 @@ class Database:
         logger.info("Database opened successfully")
         logger.debug(
             "Loaded %d entries, %d groups",
-            len(db.find_entries()),
-            len(db.find_groups()),
+            len(cast(list[Entry], db.find_entries())),
+            len(cast(list[Group], db.find_groups())),
         )
 
         return db

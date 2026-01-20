@@ -14,6 +14,7 @@ import binascii
 import contextlib
 import getpass
 import hashlib
+import logging
 import os
 import uuid as uuid_module
 from collections.abc import Iterator
@@ -46,6 +47,8 @@ from .parsing.kdbx4 import InnerHeader, read_kdbx4, write_kdbx4
 from .security import AesKdfConfig, Argon2Config, Cipher, KdfType
 from .security import yubikey as yubikey_module
 from .security.yubikey import YubiKeyConfig, compute_challenge_response
+
+logger = logging.getLogger(__name__)
 
 # Union type for KDF configurations
 KdfConfig = Argon2Config | AesKdfConfig
@@ -430,6 +433,7 @@ class Database:
             ValueError: If credentials are wrong or file is corrupted
             YubiKeyError: If YubiKey operation fails
         """
+        logger.info("Opening database: %s", filepath)
         filepath = Path(filepath)
         if not filepath.exists():
             raise FileNotFoundError(f"Database file not found: {filepath}")
@@ -551,6 +555,7 @@ class Database:
         """
         # Detect version from header (parse just enough to get version)
         header, _ = KdbxHeader.parse(data)
+        logger.debug("KDBX version: %s", header.version.name)
 
         # Get YubiKey response if slot specified
         # KeePassXC uses the KDF salt as the challenge, not master_seed
@@ -616,6 +621,13 @@ class Database:
         db._yubikey_slot = yubikey_slot
         db._yubikey_serial = yubikey_serial
 
+        logger.info("Database opened successfully")
+        logger.debug(
+            "Loaded %d entries, %d groups",
+            len(db.find_entries()),
+            len(db.find_groups()),
+        )
+
         return db
 
     # --- Creating databases ---
@@ -644,6 +656,8 @@ class Database:
         Returns:
             New Database instance
         """
+        logger.info("Creating new database")
+
         if password is None and keyfile is None:
             raise MissingCredentialsError()
 
@@ -820,6 +834,8 @@ class Database:
             Kdbx3UpgradeRequired: If saving KDBX3 to original file without allow_upgrade=True
             YubiKeyError: If YubiKey operation fails
         """
+        logger.info("Saving database to: %s", filepath or self._filepath)
+
         save_to_new_file = filepath is not None
         if filepath:
             self._filepath = Path(filepath)
@@ -845,6 +861,7 @@ class Database:
             yubikey_serial=effective_yubikey_serial,
         )
         self._filepath.write_bytes(data)
+        logger.debug("Database saved successfully")
 
         # Update stored yubikey params if changed
         if yubikey_slot is not None:
@@ -868,6 +885,8 @@ class Database:
             DatabaseError: If database wasn't opened from a file
             MissingCredentialsError: If no credentials are stored
         """
+        logger.debug("Reloading database from disk")
+
         if self._filepath is None:
             raise DatabaseError("Cannot reload: database wasn't opened from a file")
 

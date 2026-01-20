@@ -11,6 +11,7 @@ All cryptographic operations use well-audited libraries (PyCryptodome).
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -30,6 +31,8 @@ except ImportError:
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 class Cipher(Enum):
@@ -184,6 +187,7 @@ class CipherContext:
         self._cipher = cipher
         self._key = key
         self._iv = iv
+        logger.debug("Cipher initialized: %s", cipher.display_name)
 
     def encrypt(self, plaintext: bytes) -> bytes:
         """Encrypt plaintext data.

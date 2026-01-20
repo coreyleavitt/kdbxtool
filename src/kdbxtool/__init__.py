@@ -22,9 +22,14 @@ Example:
     db.save()
 """
 
+import logging
 from importlib.metadata import version
 
 __version__ = version("kdbxtool")
+
+# Configure library logger to prevent "No handler found" warnings
+# when users don't configure logging in their applications
+logging.getLogger("kdbxtool").addHandler(logging.NullHandler())
 
 from .database import Database, DatabaseSettings
 from .exceptions import (

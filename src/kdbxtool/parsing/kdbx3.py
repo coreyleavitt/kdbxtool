@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import logging
 
 from kdbxtool.exceptions import (
     AuthenticationError,
@@ -42,6 +43,8 @@ from kdbxtool.security.kdf import AesKdfConfig
 from .context import ParseContext
 from .header import CompressionType, KdbxHeader, KdbxVersion
 from .kdbx4 import DecryptedPayload, InnerHeader
+
+logger = logging.getLogger(__name__)
 
 
 class Kdbx3Reader:
@@ -80,6 +83,8 @@ class Kdbx3Reader:
             AuthenticationError: If credentials are wrong
             CorruptedDataError: If file is corrupted
         """
+        logger.debug("Starting KDBX3 decryption")
+
         # Parse outer header
         header, header_end = KdbxHeader.parse(self._ctx.data)
 
@@ -125,6 +130,7 @@ class Kdbx3Reader:
 
         if not constant_time_compare(stream_start, header.stream_start_bytes):
             raise AuthenticationError()
+        logger.debug("Stream start bytes verified")
 
         # Read content hashed blocks (after stream start bytes)
         payload_data = self._read_hashed_blocks(decrypted[32:])
@@ -132,6 +138,7 @@ class Kdbx3Reader:
         # Decompress if needed
         if header.compression == CompressionType.GZIP:
             payload_data = gzip.decompress(payload_data)
+            logger.debug("Payload decompressed, %d bytes", len(payload_data))
 
         # Create synthetic inner header from outer header fields
         inner_header = self._create_synthetic_inner_header(header)
@@ -213,6 +220,7 @@ class Kdbx3Reader:
                     result.extend(block_data)
                     expected_index += 1
 
+        logger.debug("Verified %d hashed blocks", expected_index)
         return bytes(result)
 
     def _create_synthetic_inner_header(self, header: KdbxHeader) -> InnerHeader:

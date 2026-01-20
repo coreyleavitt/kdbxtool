@@ -46,6 +46,30 @@ db.root_group.create_entry(
 db.save("vault.kdbx")
 ```
 
+## KDF Configuration
+
+The Key Derivation Function (KDF) protects your master password against brute-force attacks. Use presets or fully customize:
+
+```python
+from kdbxtool import Database, Argon2Config, AesKdfConfig
+import os
+
+# Presets: standard(), high_security(), fast()
+db = Database.create(password="secret", kdf_config=Argon2Config.high_security())
+
+# Custom Argon2 parameters
+custom_kdf = Argon2Config(
+    memory_kib=512 * 1024,  # 512 MiB
+    iterations=15,
+    parallelism=8,
+    salt=os.urandom(32),
+)
+db = Database.create(password="secret", kdf_config=custom_kdf)
+
+# Change KDF on existing database
+db.save(kdf_config=Argon2Config.high_security())
+```
+
 ## Finding Entries
 
 ```python

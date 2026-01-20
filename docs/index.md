@@ -7,6 +7,8 @@ A modern, secure Python library for reading and writing KeePass KDBX databases.
 :caption: Contents
 
 getting-started
+advanced
+migration
 api
 ```
 

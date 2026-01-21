@@ -476,11 +476,13 @@ class Database:
             if key.startswith(CR_DEVICE_PREFIX):
                 try:
                     device = deserialize_device_entry(value)
-                    devices.append({
-                        "label": device.label,
-                        "type": device.device_type,
-                        "id": device.device_id,
-                    })
+                    devices.append(
+                        {
+                            "label": device.label,
+                            "type": device.device_type,
+                            "id": device.device_id,
+                        }
+                    )
                 except ValueError:
                     logger.warning("Failed to deserialize device entry: %s", key)
         return devices
@@ -818,7 +820,7 @@ class Database:
         else:
             # Check for KEK mode vs legacy mode
             cr_version = header.public_custom_data.get(CR_VERSION_KEY)
-            kek_mode = (cr_version == VERSION_KEK)
+            kek_mode = cr_version == VERSION_KEK
 
             if kek_mode:
                 # KEK mode: unwrap KEK from enrolled device
@@ -919,8 +921,7 @@ class Database:
 
         # No enrolled device matched
         raise AuthenticationError(
-            "Challenge-response device not recognized. "
-            "Make sure you're using an enrolled device."
+            "Challenge-response device not recognized. Make sure you're using an enrolled device."
         )
 
     # --- Creating databases ---

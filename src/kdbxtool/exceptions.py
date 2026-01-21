@@ -296,8 +296,7 @@ class Fido2NotAvailableError(Fido2Error):
 
     def __init__(self) -> None:
         super().__init__(
-            "FIDO2 support requires the fido2 package. "
-            "Install with: pip install kdbxtool[fido2]"
+            "FIDO2 support requires the fido2 package. Install with: pip install kdbxtool[fido2]"
         )
 
 

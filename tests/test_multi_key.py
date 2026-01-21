@@ -137,9 +137,7 @@ class TestProviderRequirement:
             Database.open(db_path, password="password", challenge_response_provider=provider)
 
 
-@pytest.mark.xfail(
-    reason="FIDO2 requires KEK mode which is not yet implemented in database.py"
-)
+@pytest.mark.xfail(reason="FIDO2 requires KEK mode which is not yet implemented in database.py")
 class TestMixedProviderTypes:
     """Tests for using different provider types (YubiKey vs FIDO2).
 
@@ -410,9 +408,7 @@ class TestKekModeRoundtrip:
         assert entries[0].username == "testuser"
         assert entries[0].password == "testpass"
 
-    def test_kek_mode_multiple_devices_any_can_open(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_kek_mode_multiple_devices_any_can_open(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that any enrolled device can open the database."""
         from pathlib import Path
 

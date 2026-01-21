@@ -1,6 +1,5 @@
 """Tests for field reference support ({REF:X@Y:Z} syntax)."""
 
-
 import pytest
 
 from kdbxtool import Database

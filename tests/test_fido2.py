@@ -123,9 +123,7 @@ class TestFido2ProtocolCompliance:
         assert callable(provider.challenge_response)
 
 
-@pytest.mark.xfail(
-    reason="FIDO2 requires KEK mode which is not yet implemented in database.py"
-)
+@pytest.mark.xfail(reason="FIDO2 requires KEK mode which is not yet implemented in database.py")
 class TestFido2WithDatabase:
     """Tests for using MockFido2 with Database API.
 

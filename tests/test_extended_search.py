@@ -1,6 +1,5 @@
 """Tests for extended search capabilities."""
 
-
 from kdbxtool import Database
 from kdbxtool.models.entry import BinaryRef
 

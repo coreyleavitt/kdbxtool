@@ -265,6 +265,6 @@ def parse_device_key_name(key: str) -> int | None:
     if not key.startswith(CR_DEVICE_PREFIX):
         return None
     try:
-        return int(key[len(CR_DEVICE_PREFIX):])
+        return int(key[len(CR_DEVICE_PREFIX) :])
     except ValueError:
         return None

@@ -21,7 +21,6 @@ from kdbxtool.parsing.kdbx4 import (
 )
 from kdbxtool.security import Cipher, KdfType
 
-
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 TEST4_KDBX = FIXTURES_DIR / "test4.kdbx"
 TEST4_KEY = FIXTURES_DIR / "test4.key"
@@ -353,7 +352,6 @@ class TestPkcs7Padding:
 
     def test_padding_roundtrip(self) -> None:
         """Test that padding and unpadding are inverses."""
-        from kdbxtool.parsing.kdbx4 import Kdbx4Reader, Kdbx4Writer
 
         writer = Kdbx4Writer()
         reader = Kdbx4Reader(b"")
@@ -367,7 +365,6 @@ class TestPkcs7Padding:
 
     def test_invalid_padding_length(self) -> None:
         """Test that invalid padding is rejected."""
-        from kdbxtool.parsing.kdbx4 import Kdbx4Reader
 
         reader = Kdbx4Reader(b"")
 
@@ -381,7 +378,6 @@ class TestPkcs7Padding:
 
     def test_invalid_padding_bytes(self) -> None:
         """Test that inconsistent padding is rejected."""
-        from kdbxtool.parsing.kdbx4 import Kdbx4Reader
 
         reader = Kdbx4Reader(b"")
 
@@ -395,7 +391,6 @@ class TestInnerHeader:
 
     def test_inner_header_roundtrip(self) -> None:
         """Test that inner header can be built and parsed back."""
-        from kdbxtool.parsing.kdbx4 import Kdbx4Reader, Kdbx4Writer
 
         original = InnerHeader(
             random_stream_id=3,
@@ -419,7 +414,6 @@ class TestInnerHeader:
 
     def test_empty_binaries(self) -> None:
         """Test inner header with no binaries."""
-        from kdbxtool.parsing.kdbx4 import Kdbx4Reader, Kdbx4Writer
 
         original = InnerHeader(
             random_stream_id=2,

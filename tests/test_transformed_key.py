@@ -2,7 +2,7 @@
 
 import pytest
 
-from kdbxtool import Database, MissingCredentialsError
+from kdbxtool import AuthenticationError, Database, MissingCredentialsError
 
 
 class TestTransformedKey:
@@ -82,7 +82,7 @@ class TestTransformedKey:
         # Wrong key
         wrong_key = b"\x00" * 32
 
-        with pytest.raises(Exception):  # AuthenticationError or similar
+        with pytest.raises(AuthenticationError):
             Database.open_bytes(data, transformed_key=wrong_key)
 
     def test_transformed_key_zeroized_on_cleanup(self) -> None:
@@ -141,7 +141,7 @@ class TestTransformedKey:
     def test_kdf_salt_preserved_without_regenerate_seeds(self) -> None:
         """Test that kdf_salt is preserved when seeds are not regenerated."""
         db = Database.create(password="test")
-        data = db.to_bytes(regenerate_seeds=False)
+        db.to_bytes(regenerate_seeds=False)
 
         original_salt = db.kdf_salt
 

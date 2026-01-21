@@ -53,12 +53,10 @@ from .security.kek import (
     VERSION_KEK,
     VERSION_LEGACY,
     EnrolledDevice,
-    derive_final_key,
     deserialize_device_entry,
     generate_kek,
     generate_salt,
     get_device_key_name,
-    parse_device_key_name,
     serialize_device_entry,
     unwrap_kek,
     wrap_kek,
@@ -306,6 +304,10 @@ class Database:
             except TypeError:
                 pass
             self._transformed_key = None
+        # Clear KEK (most sensitive in KEK mode - can decrypt regardless of device)
+        if self._kek is not None:
+            self._kek.zeroize()
+            self._kek = None
 
     def dump(self) -> str:
         """Return a human-readable summary of the database for debugging.
@@ -495,6 +497,11 @@ class Database:
 
         First enrollment generates a KEK and converts the database to KEK mode.
         Subsequent enrollments add devices that can unlock the same KEK.
+
+        WARNING: KEK mode databases are NOT compatible with KeePassXC, KeePassDX,
+        or other KeePass applications. Only use KEK mode if you exclusively use
+        kdbxtool. For KeePassXC compatibility, use legacy mode with a single
+        YubiKey HMAC-SHA1 via the `legacy_mode=True` parameter on save().
 
         Args:
             provider: The device provider (YubiKeyHmacSha1, Fido2HmacSecret, etc.)

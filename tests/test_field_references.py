@@ -1,6 +1,5 @@
 """Tests for field reference support ({REF:X@Y:Z} syntax)."""
 
-import uuid
 
 import pytest
 
@@ -210,7 +209,7 @@ class TestDatabaseDeref:
     def test_deref_by_title(self) -> None:
         """Test dereferencing by title search."""
         db = Database.create(password="test")
-        entry = db.root_group.create_entry(
+        db.root_group.create_entry(
             title="UniqueTitle",
             password="mypassword",
         )
@@ -224,7 +223,7 @@ class TestDatabaseDeref:
     def test_deref_by_username(self) -> None:
         """Test dereferencing by username search."""
         db = Database.create(password="test")
-        entry = db.root_group.create_entry(
+        db.root_group.create_entry(
             title="Entry",
             username="unique_user",
             password="thepassword",
@@ -288,7 +287,7 @@ class TestFieldReferenceRoundtrip:
             title="Main",
             password="original_password",
         )
-        ref_entry = db.root_group.create_entry(
+        db.root_group.create_entry(
             title="Reference",
             password=main_entry.ref("password"),
         )

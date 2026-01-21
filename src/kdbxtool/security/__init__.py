@@ -26,6 +26,17 @@ from .fido2 import (
     create_fido2_credential,
     list_fido2_devices,
 )
+from .kdf import (
+    ARGON2_MIN_ITERATIONS,
+    ARGON2_MIN_MEMORY_KIB,
+    ARGON2_MIN_PARALLELISM,
+    AesKdfConfig,
+    Argon2Config,
+    KdfType,
+    derive_composite_key,
+    derive_key_aes_kdf,
+    derive_key_argon2,
+)
 from .kek import (
     CR_DEVICE_PREFIX,
     CR_SALT_KEY,
@@ -44,17 +55,6 @@ from .kek import (
     unwrap_kek,
     wrap_kek,
 )
-from .kdf import (
-    ARGON2_MIN_ITERATIONS,
-    ARGON2_MIN_MEMORY_KIB,
-    ARGON2_MIN_PARALLELISM,
-    AesKdfConfig,
-    Argon2Config,
-    KdfType,
-    derive_composite_key,
-    derive_key_aes_kdf,
-    derive_key_argon2,
-)
 from .keyfile import (
     KeyFileVersion,
     create_keyfile,
@@ -66,8 +66,8 @@ from .yubikey import (
     HMAC_SHA1_RESPONSE_SIZE,
     YUBIKEY_AVAILABLE,
     YUBIKEY_HARDWARE_AVAILABLE,
-    YubiKeyHmacSha1,
     YubiKeyConfig,
+    YubiKeyHmacSha1,
     check_slot_configured,
     compute_challenge_response,
     list_yubikeys,

@@ -10,7 +10,7 @@ is a planned future enhancement. These tests cover the current provider-based AP
 
 import pytest
 
-from kdbxtool import ChallengeResponseProvider, Database
+from kdbxtool import AuthenticationError, ChallengeResponseProvider, Database
 from kdbxtool.security.memory import SecureBytes
 from kdbxtool.testing import MockFido2, MockProvider, MockYubiKey
 
@@ -90,7 +90,7 @@ class TestProviderSeparation:
         db.save(db_path, challenge_response_provider=correct_provider)
 
         # Wrong provider should fail
-        with pytest.raises(Exception):  # AuthenticationError
+        with pytest.raises(AuthenticationError):
             Database.open(db_path, password="password", challenge_response_provider=wrong_provider)
 
 
@@ -108,7 +108,7 @@ class TestProviderRequirement:
         db.save(db_path, challenge_response_provider=provider)
 
         # Should fail without provider
-        with pytest.raises(Exception):  # AuthenticationError
+        with pytest.raises(AuthenticationError):
             Database.open(db_path, password="password")
 
     def test_extra_provider_succeeds(self, tmp_path: pytest.TempPathFactory) -> None:
@@ -133,7 +133,7 @@ class TestProviderRequirement:
 
         # Opening with provider should FAIL because the key derivation
         # will include the challenge-response which wasn't used originally
-        with pytest.raises(Exception):
+        with pytest.raises(AuthenticationError):
             Database.open(db_path, password="password", challenge_response_provider=provider)
 
 
@@ -159,7 +159,7 @@ class TestMixedProviderTypes:
         db.save(db_path, challenge_response_provider=yubikey)
 
         # FIDO2 should fail (different output size and algorithm)
-        with pytest.raises(Exception):  # AuthenticationError
+        with pytest.raises(AuthenticationError):
             Database.open(db_path, password="password", challenge_response_provider=fido2)
 
     def test_fido2_database_yubikey_fails(self, tmp_path: pytest.TempPathFactory) -> None:
@@ -174,7 +174,7 @@ class TestMixedProviderTypes:
         db.save(db_path, challenge_response_provider=fido2)
 
         # YubiKey should fail (different output size and algorithm)
-        with pytest.raises(Exception):  # AuthenticationError
+        with pytest.raises(AuthenticationError):
             Database.open(db_path, password="password", challenge_response_provider=yubikey)
 
 
@@ -272,7 +272,6 @@ class TestKekModeEnrollment:
 
     def test_enroll_single_device(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test enrolling a single device enables KEK mode."""
-        from pathlib import Path
 
         db = Database.create(password="password")
         assert not db.kek_mode
@@ -371,7 +370,9 @@ class TestKekModeEnrollment:
         db.save(db_path, challenge_response_provider=legacy_provider)
 
         # Open with legacy mode
-        db2 = Database.open(db_path, password="password", challenge_response_provider=legacy_provider)
+        db2 = Database.open(
+            db_path, password="password", challenge_response_provider=legacy_provider
+        )
 
         # Try to enroll another device - should fail
         new_provider = MockYubiKey.with_secret(b"different_secret_20!")
@@ -455,7 +456,7 @@ class TestKekModeRoundtrip:
         db.save(db_path)
 
         # Wrong device should fail
-        with pytest.raises(Exception):  # AuthenticationError
+        with pytest.raises(AuthenticationError):
             Database.open(db_path, password="password", challenge_response_provider=wrong_provider)
 
     def test_kek_mode_missing_device_fails(self, tmp_path: pytest.TempPathFactory) -> None:
@@ -481,7 +482,6 @@ class TestKekModeWithFido2:
 
     def test_fido2_enrollment_works(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that FIDO2 devices can be enrolled in KEK mode."""
-        from pathlib import Path
 
         db = Database.create(password="password")
         provider = MockFido2.with_test_secret()

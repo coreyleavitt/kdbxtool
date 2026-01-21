@@ -187,8 +187,8 @@ class TestWrapUnwrapKek:
         wrapped1 = wrap_kek(kek, cr_response)
         wrapped2 = wrap_kek(kek, cr_response)
 
-        # Nonces (first 12 bytes) should differ
-        assert wrapped1[:12] != wrapped2[:12]
+        # Nonces (first 16 bytes, PyCryptodome default) should differ
+        assert wrapped1[:16] != wrapped2[:16]
 
         # Both should unwrap to same KEK
         assert unwrap_kek(wrapped1, cr_response).data == kek
@@ -350,8 +350,16 @@ class TestSerializeDeserialize:
 
     def test_deserialize_bad_json_fails(self) -> None:
         """Test that deserialize fails with bad JSON."""
+        # Use correctly-sized wrapped_kek (64 bytes) so we hit JSON parsing error
         with pytest.raises(ValueError, match="bad JSON"):
-            deserialize_device_entry(b"not valid json\x00wrapped_kek")
+            deserialize_device_entry(b"not valid json\x00" + b"x" * 64)
+
+    def test_deserialize_bad_wrapped_kek_size_fails(self) -> None:
+        """Test that deserialize fails with wrong wrapped_kek size."""
+        # Valid JSON but wrong wrapped_kek size
+        valid_json = b'{"type":"test","label":"Test","id":"1"}'
+        with pytest.raises(ValueError, match=r"Invalid wrapped_kek size: \d+, expected 64"):
+            deserialize_device_entry(valid_json + b"\x00" + b"too_short")
 
 
 class TestDeviceKeyNames:
@@ -394,7 +402,6 @@ class TestMultiDeviceScenario:
     def test_multiple_devices_same_kek(self) -> None:
         """Test that multiple devices can wrap the same KEK."""
         kek = generate_kek()
-        salt = generate_salt()
 
         # Simulate two different devices with different CR responses
         response1 = b"device1_cr_response_pad" + b"\x00" * 12  # 32 bytes

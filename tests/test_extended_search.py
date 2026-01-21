@@ -1,8 +1,7 @@
 """Tests for extended search capabilities."""
 
-import pytest
 
-from kdbxtool import Attachment, Database
+from kdbxtool import Database
 from kdbxtool.models.entry import BinaryRef
 
 
@@ -56,8 +55,8 @@ class TestFindEntriesByNotes:
     def test_find_by_notes(self) -> None:
         """Test finding entries by notes."""
         db = Database.create(password="test")
-        entry1 = db.root_group.create_entry(title="Entry1", notes="Important note")
-        entry2 = db.root_group.create_entry(title="Entry2", notes="Other note")
+        db.root_group.create_entry(title="Entry1", notes="Important note")
+        db.root_group.create_entry(title="Entry2", notes="Other note")
 
         entries = db.find_entries(notes="Important note")
 

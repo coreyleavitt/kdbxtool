@@ -45,9 +45,9 @@ from .memory import SecureBytes
 
 # Optional yubikey-manager support
 try:
-    from ykman.device import list_all_devices  # type: ignore[import-not-found]
-    from yubikit.core.otp import OtpConnection  # type: ignore[import-not-found]
-    from yubikit.yubiotp import (  # type: ignore[import-not-found]
+    from ykman.device import list_all_devices
+    from yubikit.core.otp import OtpConnection
+    from yubikit.yubiotp import (
         SLOT,
         YubiOtpSession,
     )

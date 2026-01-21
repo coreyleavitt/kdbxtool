@@ -1,6 +1,5 @@
 """Tests for high-level Database API."""
 
-import base64
 import os
 import tempfile
 from pathlib import Path
@@ -12,7 +11,6 @@ from kdbxtool import (
     Database,
     DatabaseError,
     DatabaseSettings,
-    Entry,
     Group,
     MissingCredentialsError,
     UnknownCipherError,
@@ -23,7 +21,6 @@ from kdbxtool.database import (
     ProtectedStreamCipher,
 )
 from kdbxtool.security import Argon2Config, Cipher, KdfType
-
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 TEST4_KDBX = FIXTURES_DIR / "test4.kdbx"
@@ -804,10 +801,12 @@ class TestOpenInteractive:
         db.save(db_path)
 
         # First two calls return wrong password, third returns correct
-        with patch("getpass.getpass", side_effect=["wrong1", "wrong2", "correct"]):
-            with patch("builtins.print"):  # Suppress retry message
-                db2 = Database.open_interactive(db_path, max_attempts=3)
-                assert db2 is not None
+        with (
+            patch("getpass.getpass", side_effect=["wrong1", "wrong2", "correct"]),
+            patch("builtins.print"),  # Suppress retry message
+        ):
+            db2 = Database.open_interactive(db_path, max_attempts=3)
+            assert db2 is not None
 
     def test_open_interactive_max_attempts_exceeded(self, tmp_path: Path) -> None:
         """Test open_interactive raises after max_attempts."""
@@ -817,10 +816,12 @@ class TestOpenInteractive:
         db = Database.create(password="correct")
         db.save(db_path)
 
-        with patch("getpass.getpass", return_value="wrong"):
-            with patch("builtins.print"):  # Suppress retry messages
-                with pytest.raises(AuthenticationError, match="3 attempts"):
-                    Database.open_interactive(db_path, max_attempts=3)
+        with (
+            patch("getpass.getpass", return_value="wrong"),
+            patch("builtins.print"),  # Suppress retry messages
+            pytest.raises(AuthenticationError, match="3 attempts"),
+        ):
+            Database.open_interactive(db_path, max_attempts=3)
 
     def test_open_interactive_with_keyfile(self, tmp_path: Path) -> None:
         """Test open_interactive with keyfile."""

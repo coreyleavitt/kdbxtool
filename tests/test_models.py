@@ -1,12 +1,12 @@
 """Tests for KDBX data models."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from kdbxtool.models import Entry, Group, HistoryEntry, Times
-from kdbxtool.models.entry import RESERVED_KEYS, AutoType, BinaryRef, StringField
+from kdbxtool.models.entry import AutoType, BinaryRef, StringField
 
 
 class TestTimes:
@@ -23,7 +23,7 @@ class TestTimes:
 
     def test_create_with_expiry(self) -> None:
         """Test creating timestamps with expiry."""
-        expiry = datetime.now(timezone.utc) + timedelta(days=30)
+        expiry = datetime.now(UTC) + timedelta(days=30)
         times = Times.create_new(expires=True, expiry_time=expiry)
         assert times.expires is True
         assert times.expiry_time == expiry
@@ -31,13 +31,13 @@ class TestTimes:
 
     def test_expired(self) -> None:
         """Test expired check."""
-        past = datetime.now(timezone.utc) - timedelta(days=1)
+        past = datetime.now(UTC) - timedelta(days=1)
         times = Times.create_new(expires=True, expiry_time=past)
         assert times.expired is True
 
     def test_not_expired_when_disabled(self) -> None:
         """Test that expired is False when expires is False."""
-        past = datetime.now(timezone.utc) - timedelta(days=1)
+        past = datetime.now(UTC) - timedelta(days=1)
         times = Times.create_new(expires=False, expiry_time=past)
         assert times.expired is False
 
@@ -272,7 +272,7 @@ class TestHistoryEntry:
         import time
 
         time.sleep(0.01)
-        entry.times.last_modification_time = datetime.now(timezone.utc)
+        entry.times.last_modification_time = datetime.now(UTC)
         history2 = HistoryEntry.from_entry(entry)
 
         # Same UUID but different mtime -> different hash
@@ -505,8 +505,8 @@ class TestGroup:
         """Test finding groups by name."""
         root = Group.create_root("Root")
         sub1 = root.create_subgroup("Work")
-        sub2 = root.create_subgroup("Personal")
-        subsub = sub1.create_subgroup("Projects")
+        root.create_subgroup("Personal")
+        sub1.create_subgroup("Projects")
 
         found = root.find_groups(name="Work")
         assert len(found) == 1

@@ -1,11 +1,10 @@
 """Tests for FIDO2 hmac-secret support."""
 
-import os
 from unittest.mock import patch
 
 import pytest
 
-from kdbxtool import ChallengeResponseProvider, Database
+from kdbxtool import AuthenticationError, ChallengeResponseProvider, Database
 from kdbxtool.exceptions import (
     Fido2CredentialNotFoundError,
     Fido2DeviceNotFoundError,
@@ -196,7 +195,7 @@ class TestFido2WithDatabase:
         db.save(db_path, challenge_response_provider=provider)
 
         # Should fail to open without provider
-        with pytest.raises(Exception):  # AuthenticationError or similar
+        with pytest.raises(AuthenticationError):
             Database.open(db_path, password="same_password")
 
         # Should succeed with provider

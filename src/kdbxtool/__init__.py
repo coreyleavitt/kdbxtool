@@ -63,12 +63,6 @@ from .exceptions import (
 from .merge import DeletedObject, MergeMode, MergeResult
 from .models import Attachment, Entry, Group, HistoryEntry, Times
 from .security import AesKdfConfig, Argon2Config, Cipher, KdfType
-from .security.keyfile import (
-    KeyFileVersion,
-    create_keyfile,
-    create_keyfile_bytes,
-    parse_keyfile,
-)
 from .security.challenge_response import ChallengeResponseProvider
 from .security.fido2 import (
     FIDO2_AVAILABLE,
@@ -77,10 +71,16 @@ from .security.fido2 import (
     create_fido2_credential,
     list_fido2_devices,
 )
+from .security.keyfile import (
+    KeyFileVersion,
+    create_keyfile,
+    create_keyfile_bytes,
+    parse_keyfile,
+)
 from .security.yubikey import (
     YUBIKEY_HARDWARE_AVAILABLE,
-    YubiKeyHmacSha1,
     YubiKeyConfig,
+    YubiKeyHmacSha1,
     check_slot_configured,
     list_yubikeys,
 )

@@ -1,7 +1,7 @@
 """Tests for YubiKey HMAC-SHA1 challenge-response support."""
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

@@ -33,7 +33,6 @@ Security Notes:
 from __future__ import annotations
 
 import logging
-import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -50,11 +49,13 @@ from .memory import SecureBytes
 
 # Optional python-fido2 support
 try:
-    from fido2.client import Fido2Client, UserInteraction  # type: ignore[import-not-found]
-    from fido2.hid import CtapHidDevice  # type: ignore[import-not-found]
-    from fido2.webauthn import (  # type: ignore[import-not-found]
+    from fido2.client import DefaultClientDataCollector, Fido2Client, UserInteraction
+    from fido2.ctap2.extensions import HmacSecretExtension
+    from fido2.hid import CtapHidDevice
+    from fido2.webauthn import (
         PublicKeyCredentialCreationOptions,
         PublicKeyCredentialDescriptor,
+        PublicKeyCredentialParameters,
         PublicKeyCredentialRequestOptions,
         PublicKeyCredentialRpEntity,
         PublicKeyCredentialType,
@@ -64,7 +65,7 @@ try:
     FIDO2_AVAILABLE = True
 except ImportError:
     FIDO2_AVAILABLE = False
-    # Define a placeholder for type checking
+    # Define placeholders for type checking
     UserInteraction = object  # type: ignore[misc,assignment]
 
 if TYPE_CHECKING:
@@ -150,7 +151,7 @@ def create_fido2_credential(
     device = devices[0]
 
     # Simple interaction handler for credential creation
-    class CreationInteraction(UserInteraction):  # type: ignore[misc]
+    class CreationInteraction(UserInteraction):
         def prompt_up(self) -> None:
             if on_touch is not None:
                 on_touch("Touch your security key to create credential...")
@@ -164,10 +165,15 @@ def create_fido2_credential(
             return True
 
     try:
+        # Create client with fido2 2.0 API
+        client_data_collector = DefaultClientDataCollector(f"https://{rp_id}")
         client = Fido2Client(
             device,
-            f"https://{rp_id}",
+            client_data_collector=client_data_collector,
             user_interaction=CreationInteraction(),
+            extensions=[
+                HmacSecretExtension(allow_hmac_secret=True)  # type: ignore[no-untyped-call]
+            ],
         )
 
         # Check for hmac-secret support
@@ -194,14 +200,22 @@ def create_fido2_credential(
                 user=user,
                 challenge=b"kdbxtool-credential-creation",
                 pub_key_cred_params=[
-                    {"type": "public-key", "alg": -7},  # ES256
-                    {"type": "public-key", "alg": -257},  # RS256
+                    PublicKeyCredentialParameters(
+                        type=PublicKeyCredentialType.PUBLIC_KEY, alg=-7
+                    ),  # ES256
+                    PublicKeyCredentialParameters(
+                        type=PublicKeyCredentialType.PUBLIC_KEY, alg=-257
+                    ),  # RS256
                 ],
                 extensions={"hmacCreateSecret": True},
             )
         )
 
-        credential_id = result.attestation_object.auth_data.credential_data.credential_id
+        # Extract credential_id from the response (fido2 2.0 API)
+        auth_data = result.response.attestation_object.auth_data
+        if auth_data.credential_data is None:
+            raise Fido2Error("Credential creation failed: no credential data returned")
+        credential_id = auth_data.credential_data.credential_id
         logger.info("Created FIDO2 credential: %s", credential_id.hex()[:16] + "...")
 
         return bytes(credential_id)
@@ -315,10 +329,15 @@ class Fido2HmacSecret(ABC):
         user_interaction = self._get_user_interaction()
 
         try:
+            # Create client with fido2 2.0 API
+            client_data_collector = DefaultClientDataCollector(f"https://{self._rp_id}")
             client = Fido2Client(
                 self._device,
-                f"https://{self._rp_id}",
+                client_data_collector=client_data_collector,
                 user_interaction=user_interaction,
+                extensions=[
+                    HmacSecretExtension(allow_hmac_secret=True)  # type: ignore[no-untyped-call]
+                ],
             )
 
             # Get assertion with hmac-secret extension
@@ -340,14 +359,14 @@ class Fido2HmacSecret(ABC):
                 )
             )
 
-            # Extract hmac-secret output from extension results
+            # Extract hmac-secret output from extension results (fido2 2.0 API)
             response = result.get_response(0)
-            extension_results = response.extension_results
+            ext_results = response.client_extension_results
 
-            if not extension_results or "hmacGetSecret" not in extension_results:
+            if ext_results is None or ext_results.hmac_get_secret is None:
                 raise Fido2Error("Device did not return hmac-secret output")
 
-            output = extension_results["hmacGetSecret"]["output1"]
+            output = ext_results.hmac_get_secret.output1
             logger.debug("FIDO2 hmac-secret challenge-response complete")
 
             return SecureBytes(bytes(output))
@@ -431,7 +450,7 @@ class YubiKeyFido2(Fido2HmacSecret):
 # YubiKey-specific UserInteraction implementation
 if FIDO2_AVAILABLE:
 
-    class _YubiKeyInteraction(UserInteraction):  # type: ignore[misc]
+    class _YubiKeyInteraction(UserInteraction):
         """UserInteraction for YubiKey FIDO2 devices.
 
         Handles host-side PIN entry and touch prompts.

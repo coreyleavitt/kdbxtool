@@ -59,7 +59,6 @@ class TestCreateKeyfileBytes:
 
     def test_xml_v1_base64_encoded(self) -> None:
         """Test that XML v1.0 key is base64 encoded."""
-        import base64
 
         data = create_keyfile_bytes(KeyFileVersion.XML_V1)
 

@@ -54,7 +54,7 @@ class EnrolledDevice:
         label: User-friendly name (e.g., "Primary YubiKey")
         device_id: Unique identifier (slot+serial, credential_id, etc.)
         metadata: Additional device-specific data
-        wrapped_kek: AES-GCM encrypted KEK (60 bytes)
+        wrapped_kek: AES-GCM encrypted KEK (64 bytes)
     """
 
     device_type: str
@@ -102,7 +102,7 @@ def wrap_kek(kek: bytes, cr_response: bytes) -> bytes:
         cr_response: Challenge-response output (20 or 32 bytes)
 
     Returns:
-        60-byte encrypted KEK: nonce (12) + tag (16) + ciphertext (32)
+        64-byte encrypted KEK: nonce (16) + tag (16) + ciphertext (32)
 
     Raises:
         ValueError: If kek is not 32 bytes
@@ -125,7 +125,7 @@ def unwrap_kek(wrapped: bytes, cr_response: bytes) -> SecureBytes:
     """Decrypt KEK using device's CR response.
 
     Args:
-        wrapped: 60-byte encrypted KEK from wrap_kek()
+        wrapped: 64-byte encrypted KEK from wrap_kek()
         cr_response: Challenge-response output (20 or 32 bytes)
 
     Returns:
@@ -177,7 +177,7 @@ def derive_final_key(base_master_key: bytes, kek: bytes) -> SecureBytes:
     if len(kek) != 32:
         raise ValueError(f"kek must be 32 bytes, got {len(kek)}")
 
-    final = bytes(a ^ b for a, b in zip(base_master_key, kek))
+    final = bytes(a ^ b for a, b in zip(base_master_key, kek, strict=True))
     return SecureBytes(final)
 
 
@@ -221,6 +221,11 @@ def deserialize_device_entry(data: bytes) -> EnrolledDevice:
 
     json_bytes = data[:null_idx]
     wrapped_kek = data[null_idx + 1 :]
+
+    if len(wrapped_kek) != WRAPPED_KEK_SIZE:
+        raise ValueError(
+            f"Invalid wrapped_kek size: {len(wrapped_kek)}, expected {WRAPPED_KEK_SIZE}"
+        )
 
     try:
         metadata = json.loads(json_bytes.decode("utf-8"))

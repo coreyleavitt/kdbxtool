@@ -40,6 +40,7 @@ from kdbxtool.security import (
     compute_hmac_sha256,
     constant_time_compare,
     derive_composite_key,
+    derive_final_key,
     derive_key_aes_kdf,
     derive_key_argon2,
 )
@@ -108,7 +109,8 @@ class Kdbx4Reader:
         password: str | None = None,
         keyfile_data: bytes | None = None,
         transformed_key: bytes | None = None,
-        yubikey_response: bytes | None = None,
+        yubikey_hmac_response: bytes | None = None,
+        kek: bytes | None = None,
     ) -> DecryptedPayload:
         """Decrypt the KDBX4 file.
 
@@ -116,7 +118,9 @@ class Kdbx4Reader:
             password: Optional password
             keyfile_data: Optional keyfile contents
             transformed_key: Optional precomputed transformed key (skips KDF)
-            yubikey_response: Optional 20-byte YubiKey HMAC-SHA1 response
+            yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (legacy mode)
+            kek: Optional 32-byte Key Encryption Key (KEK mode). If provided,
+                the final master key is XOR'd with KEK after KDF derivation.
 
         Returns:
             DecryptedPayload with header, inner header, XML, and transformed_key
@@ -157,11 +161,16 @@ class Kdbx4Reader:
             composite_key = derive_composite_key(
                 password=password,
                 keyfile_data=keyfile_data,
-                yubikey_response=yubikey_response,
+                yubikey_hmac_response=yubikey_hmac_response,
             )
             # Derive master key using KDF (slow)
             master_key = self._derive_master_key(header, composite_key)
             master_key_bytes = master_key.data
+
+        # Apply KEK if provided (KEK mode for multi-device support)
+        if kek is not None:
+            logger.debug("Applying KEK to master key")
+            master_key_bytes = derive_final_key(master_key_bytes, kek).data
 
         # Derive keys for HMAC and encryption
         hmac_key, cipher_key = self._derive_keys(master_key_bytes, header.master_seed)
@@ -390,7 +399,8 @@ class Kdbx4Writer:
         password: str | None = None,
         keyfile_data: bytes | None = None,
         transformed_key: bytes | None = None,
-        yubikey_response: bytes | None = None,
+        yubikey_hmac_response: bytes | None = None,
+        kek: bytes | None = None,
     ) -> bytes:
         """Encrypt database to KDBX4 format.
 
@@ -401,7 +411,8 @@ class Kdbx4Writer:
             password: Optional password
             keyfile_data: Optional keyfile contents
             transformed_key: Optional precomputed transformed key (skips KDF)
-            yubikey_response: Optional 20-byte YubiKey HMAC-SHA1 response
+            yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (legacy mode)
+            kek: Optional 32-byte Key Encryption Key (KEK mode)
 
         Returns:
             Complete KDBX4 file as bytes
@@ -421,11 +432,16 @@ class Kdbx4Writer:
             composite_key = derive_composite_key(
                 password=password,
                 keyfile_data=keyfile_data,
-                yubikey_response=yubikey_response,
+                yubikey_hmac_response=yubikey_hmac_response,
             )
             # Derive master key using KDF (slow)
             master_key = self._derive_master_key(header, composite_key)
             master_key_bytes = master_key.data
+
+        # Apply KEK if provided (KEK mode for multi-device support)
+        if kek is not None:
+            logger.debug("Applying KEK to master key")
+            master_key_bytes = derive_final_key(master_key_bytes, kek).data
 
         # Derive keys for HMAC and encryption
         hmac_key, cipher_key = self._derive_keys(master_key_bytes, header.master_seed)
@@ -574,7 +590,8 @@ def read_kdbx4(
     password: str | None = None,
     keyfile_data: bytes | None = None,
     transformed_key: bytes | None = None,
-    yubikey_response: bytes | None = None,
+    yubikey_hmac_response: bytes | None = None,
+    kek: bytes | None = None,
 ) -> DecryptedPayload:
     """Convenience function to read a KDBX4 file.
 
@@ -583,7 +600,8 @@ def read_kdbx4(
         password: Optional password
         keyfile_data: Optional keyfile contents
         transformed_key: Optional precomputed transformed key (skips KDF)
-        yubikey_response: Optional 20-byte YubiKey HMAC-SHA1 response
+        yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (legacy mode)
+        kek: Optional 32-byte Key Encryption Key (KEK mode)
 
     Returns:
         DecryptedPayload with header, inner header, XML, and transformed_key
@@ -593,7 +611,8 @@ def read_kdbx4(
         password=password,
         keyfile_data=keyfile_data,
         transformed_key=transformed_key,
-        yubikey_response=yubikey_response,
+        yubikey_hmac_response=yubikey_hmac_response,
+        kek=kek,
     )
 
 
@@ -604,7 +623,8 @@ def write_kdbx4(
     password: str | None = None,
     keyfile_data: bytes | None = None,
     transformed_key: bytes | None = None,
-    yubikey_response: bytes | None = None,
+    yubikey_hmac_response: bytes | None = None,
+    kek: bytes | None = None,
 ) -> bytes:
     """Convenience function to write a KDBX4 file.
 
@@ -615,7 +635,8 @@ def write_kdbx4(
         password: Optional password
         keyfile_data: Optional keyfile contents
         transformed_key: Optional precomputed transformed key (skips KDF)
-        yubikey_response: Optional 20-byte YubiKey HMAC-SHA1 response
+        yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (legacy mode)
+        kek: Optional 32-byte Key Encryption Key (KEK mode)
 
     Returns:
         Complete KDBX4 file as bytes
@@ -628,5 +649,6 @@ def write_kdbx4(
         password=password,
         keyfile_data=keyfile_data,
         transformed_key=transformed_key,
-        yubikey_response=yubikey_response,
+        yubikey_hmac_response=yubikey_hmac_response,
+        kek=kek,
     )

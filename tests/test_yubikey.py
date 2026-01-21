@@ -65,22 +65,22 @@ class TestHmacSha1ResponseSize:
 
 
 class TestDeriveCompositeKeyWithYubiKey:
-    """Tests for derive_composite_key with YubiKey response."""
+    """Tests for derive_composite_key with YubiKey HMAC-SHA1 response (legacy mode)."""
 
     def test_yubikey_response_only(self) -> None:
-        """Test composite key from YubiKey response only."""
+        """Test composite key from YubiKey HMAC-SHA1 response only."""
         # Simulate 20-byte HMAC-SHA1 response
-        yubikey_response = os.urandom(20)
-        result = derive_composite_key(yubikey_response=yubikey_response)
+        yubikey_hmac_response = os.urandom(20)
+        result = derive_composite_key(yubikey_hmac_response=yubikey_hmac_response)
         assert isinstance(result, SecureBytes)
         assert len(result.data) == 32
 
     def test_password_and_yubikey(self) -> None:
         """Test composite key from password and YubiKey response."""
-        yubikey_response = os.urandom(20)
+        yubikey_hmac_response = os.urandom(20)
         result = derive_composite_key(
             password="mypassword",
-            yubikey_response=yubikey_response,
+            yubikey_hmac_response=yubikey_hmac_response,
         )
         assert isinstance(result, SecureBytes)
         assert len(result.data) == 32
@@ -88,10 +88,10 @@ class TestDeriveCompositeKeyWithYubiKey:
     def test_keyfile_and_yubikey(self) -> None:
         """Test composite key from keyfile and YubiKey response."""
         keyfile_data = os.urandom(64)
-        yubikey_response = os.urandom(20)
+        yubikey_hmac_response = os.urandom(20)
         result = derive_composite_key(
             keyfile_data=keyfile_data,
-            yubikey_response=yubikey_response,
+            yubikey_hmac_response=yubikey_hmac_response,
         )
         assert isinstance(result, SecureBytes)
         assert len(result.data) == 32
@@ -99,62 +99,63 @@ class TestDeriveCompositeKeyWithYubiKey:
     def test_all_credentials(self) -> None:
         """Test composite key from all credential types."""
         keyfile_data = os.urandom(64)
-        yubikey_response = os.urandom(20)
+        yubikey_hmac_response = os.urandom(20)
         result = derive_composite_key(
             password="mypassword",
             keyfile_data=keyfile_data,
-            yubikey_response=yubikey_response,
+            yubikey_hmac_response=yubikey_hmac_response,
         )
         assert isinstance(result, SecureBytes)
         assert len(result.data) == 32
 
     def test_yubikey_changes_key(self) -> None:
         """Test that YubiKey response changes the composite key."""
-        yubikey_response = os.urandom(20)
+        yubikey_hmac_response = os.urandom(20)
         result_pwd = derive_composite_key(password="password")
         result_with_yk = derive_composite_key(
             password="password",
-            yubikey_response=yubikey_response,
+            yubikey_hmac_response=yubikey_hmac_response,
         )
         assert result_pwd.data != result_with_yk.data
 
     def test_different_yubikey_responses(self) -> None:
         """Test that different YubiKey responses produce different keys."""
-        result1 = derive_composite_key(yubikey_response=os.urandom(20))
-        result2 = derive_composite_key(yubikey_response=os.urandom(20))
+        result1 = derive_composite_key(yubikey_hmac_response=os.urandom(20))
+        result2 = derive_composite_key(yubikey_hmac_response=os.urandom(20))
         assert result1.data != result2.data
 
     def test_deterministic_with_yubikey(self) -> None:
         """Test that same inputs produce same output."""
-        yubikey_response = os.urandom(20)
+        yubikey_hmac_response = os.urandom(20)
         result1 = derive_composite_key(
             password="password",
-            yubikey_response=yubikey_response,
+            yubikey_hmac_response=yubikey_hmac_response,
         )
         result2 = derive_composite_key(
             password="password",
-            yubikey_response=yubikey_response,
+            yubikey_hmac_response=yubikey_hmac_response,
         )
         assert result1.data == result2.data
 
     def test_invalid_yubikey_response_size(self) -> None:
         """Test that wrong response size raises ValueError."""
-        # 16 bytes is invalid (not 20 YubiKey or 32 FIDO2)
-        with pytest.raises(ValueError, match="must be 20 bytes.*or 32 bytes"):
-            derive_composite_key(yubikey_response=os.urandom(16))
+        # 16 bytes is invalid (legacy mode only supports 20-byte HMAC-SHA1)
+        with pytest.raises(ValueError, match="only supports YubiKey HMAC-SHA1"):
+            derive_composite_key(yubikey_hmac_response=os.urandom(16))
 
     def test_invalid_yubikey_response_too_long(self) -> None:
         """Test that too-long response raises ValueError."""
-        # 64 bytes is invalid (not 20 YubiKey or 32 FIDO2)
-        with pytest.raises(ValueError, match="must be 20 bytes.*or 32 bytes"):
-            derive_composite_key(yubikey_response=os.urandom(64))
+        # 64 bytes is invalid (legacy mode only supports 20-byte HMAC-SHA1)
+        with pytest.raises(ValueError, match="only supports YubiKey HMAC-SHA1"):
+            derive_composite_key(yubikey_hmac_response=os.urandom(64))
 
-    def test_fido2_response_size_accepted(self) -> None:
-        """Test that 32-byte FIDO2 response is accepted."""
-        # 32 bytes is valid (FIDO2 hmac-secret)
-        result = derive_composite_key(yubikey_response=os.urandom(32))
-        assert isinstance(result, SecureBytes)
-        assert len(result.data) == 32
+    def test_fido2_response_rejected_in_legacy_mode(self) -> None:
+        """Test that 32-byte FIDO2 response is rejected in legacy mode.
+
+        FIDO2 providers must use KEK mode, not legacy mode (derive_composite_key).
+        """
+        with pytest.raises(ValueError, match="FIDO2.*must use KEK mode"):
+            derive_composite_key(yubikey_hmac_response=os.urandom(32))
 
 
 class TestYubiKeyExceptions:

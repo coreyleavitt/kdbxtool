@@ -7,6 +7,7 @@ from kdbxtool.security.kek import (
     CR_SALT_KEY,
     CR_VERSION_KEY,
     HKDF_INFO_KEK_WRAP,
+    MIN_CR_RESPONSE_LENGTH,
     VERSION_KEK,
     VERSION_LEGACY,
     WRAPPED_KEK_SIZE,
@@ -264,6 +265,43 @@ class TestWrapUnwrapKek:
         # Both should unwrap to same KEK
         assert unwrap_kek(wrapped1, cr_response).data == kek
         assert unwrap_kek(wrapped2, cr_response).data == kek
+
+    def test_wrap_rejects_short_cr_response(self) -> None:
+        """Test that wrap_kek rejects CR responses shorter than minimum."""
+        kek = b"k" * 32
+        short_response = b"x" * (MIN_CR_RESPONSE_LENGTH - 1)
+
+        with pytest.raises(ValueError, match="CR response too short"):
+            wrap_kek(kek, short_response)
+
+    def test_unwrap_rejects_short_cr_response(self) -> None:
+        """Test that unwrap_kek rejects CR responses shorter than minimum."""
+        # Create a valid wrapped KEK first
+        kek = b"k" * 32
+        valid_response = b"r" * 20
+        wrapped = wrap_kek(kek, valid_response)
+
+        # Try to unwrap with too-short response
+        short_response = b"x" * (MIN_CR_RESPONSE_LENGTH - 1)
+        with pytest.raises(ValueError, match="CR response too short"):
+            unwrap_kek(wrapped, short_response)
+
+    def test_wrap_accepts_minimum_length_response(self) -> None:
+        """Test that wrap_kek accepts exactly minimum length CR response."""
+        kek = b"k" * 32
+        min_response = b"x" * MIN_CR_RESPONSE_LENGTH
+
+        # Should not raise
+        wrapped = wrap_kek(kek, min_response)
+        assert len(wrapped) == WRAPPED_KEK_SIZE
+
+        # Should be able to unwrap
+        unwrapped = unwrap_kek(wrapped, min_response)
+        assert unwrapped.data == kek
+
+    def test_min_cr_response_length_constant(self) -> None:
+        """Test that minimum CR response length is 16 bytes (128 bits)."""
+        assert MIN_CR_RESPONSE_LENGTH == 16
 
 
 class TestDeriveFinalKey:

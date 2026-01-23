@@ -82,6 +82,11 @@ VERSION_KEK = b"\x02"  # KEK wrapping (multi-key support)
 # Wrapped KEK size: nonce (16, PyCryptodome default) + tag (16) + ciphertext (32) = 64 bytes
 WRAPPED_KEK_SIZE = 64
 
+# Minimum CR response length for security (128 bits)
+# YubiKey HMAC-SHA1 = 20 bytes, FIDO2 hmac-secret = 32 bytes
+# Anything shorter than 16 bytes provides insufficient entropy
+MIN_CR_RESPONSE_LENGTH = 16
+
 
 @dataclass
 class EnrolledDevice:
@@ -139,16 +144,22 @@ def wrap_kek(kek: bytes, cr_response: bytes) -> bytes:
 
     Args:
         kek: 32-byte Key Encryption Key
-        cr_response: Challenge-response output (20 or 32 bytes)
+        cr_response: Challenge-response output (minimum 16 bytes, typically 20 or 32)
 
     Returns:
         64-byte encrypted KEK: nonce (16) + tag (16) + ciphertext (32)
 
     Raises:
-        ValueError: If kek is not 32 bytes
+        ValueError: If kek is not 32 bytes or cr_response is too short
     """
     if len(kek) != 32:
         raise ValueError(f"KEK must be 32 bytes, got {len(kek)}")
+
+    if len(cr_response) < MIN_CR_RESPONSE_LENGTH:
+        raise ValueError(
+            f"CR response too short: {len(cr_response)} bytes, "
+            f"minimum {MIN_CR_RESPONSE_LENGTH} bytes required for security"
+        )
 
     # Derive AES key from CR response using HKDF with domain separation
     # This prevents key reuse if the same CR response is used elsewhere
@@ -175,16 +186,22 @@ def unwrap_kek(wrapped: bytes, cr_response: bytes) -> SecureBytes:
 
     Args:
         wrapped: 64-byte encrypted KEK from wrap_kek()
-        cr_response: Challenge-response output (20 or 32 bytes)
+        cr_response: Challenge-response output (minimum 16 bytes, typically 20 or 32)
 
     Returns:
         32-byte KEK wrapped in SecureBytes
 
     Raises:
-        ValueError: If wrapped is wrong size or decryption fails
+        ValueError: If wrapped is wrong size, cr_response too short, or decryption fails
     """
     if len(wrapped) != WRAPPED_KEK_SIZE:
         raise ValueError(f"Invalid wrapped KEK length: {len(wrapped)}, expected {WRAPPED_KEK_SIZE}")
+
+    if len(cr_response) < MIN_CR_RESPONSE_LENGTH:
+        raise ValueError(
+            f"CR response too short: {len(cr_response)} bytes, "
+            f"minimum {MIN_CR_RESPONSE_LENGTH} bytes required for security"
+        )
 
     # Derive AES key from CR response using HKDF with domain separation
     device_key = bytearray(_hkdf_sha256(cr_response, HKDF_INFO_KEK_WRAP))

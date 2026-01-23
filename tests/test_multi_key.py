@@ -10,7 +10,13 @@ is a planned future enhancement. These tests cover the current provider-based AP
 
 import pytest
 
-from kdbxtool import AuthenticationError, ChallengeResponseProvider, Database, DatabaseError
+from kdbxtool import (
+    AuthenticationError,
+    ChallengeResponseError,
+    ChallengeResponseProvider,
+    Database,
+    DatabaseError,
+)
 from kdbxtool.security.memory import SecureBytes
 from kdbxtool.testing import MockFido2, MockProvider, MockYubiKey
 
@@ -376,6 +382,63 @@ class TestKekModeEnrollment:
         new_provider = MockYubiKey.with_secret(b"different_secret_20!")
         with pytest.raises(DatabaseError, match="legacy"):
             db2.enroll_device(new_provider, label="New Device")
+
+    def test_enrollment_atomic_on_provider_failure(self) -> None:
+        """Test that enrollment is atomic - no state changes if provider fails."""
+
+        class FailingProvider:
+            """A provider that always fails."""
+
+            def challenge_response(self, challenge: bytes) -> SecureBytes:
+                raise ChallengeResponseError("Device not connected")
+
+        db = Database.create(password="password")
+
+        # Capture initial state
+        assert not db.kek_mode
+        assert db.enrolled_device_count == 0
+        initial_cr_salt = db._cr_salt  # Should be None
+
+        # Attempt enrollment with failing provider
+        failing_provider = FailingProvider()
+        with pytest.raises(ChallengeResponseError, match="Device not connected"):
+            db.enroll_device(failing_provider, label="Failing Device")
+
+        # Verify no state was modified
+        assert not db.kek_mode, "KEK mode should not be enabled after failed enrollment"
+        assert db.enrolled_device_count == 0, "No device should be enrolled"
+        assert db._cr_salt == initial_cr_salt, "Salt should not be modified"
+        assert db._kek is None, "KEK should not be generated"
+
+    def test_enrollment_atomic_second_device_failure(self) -> None:
+        """Test that adding a second device is atomic if it fails."""
+
+        class FailingProvider:
+            """A provider that always fails."""
+
+            def challenge_response(self, challenge: bytes) -> SecureBytes:
+                raise ChallengeResponseError("Device not connected")
+
+        db = Database.create(password="password")
+        first_provider = MockYubiKey.with_test_secret()
+        db.enroll_device(first_provider, label="First Device")
+
+        # Capture state after first enrollment
+        assert db.kek_mode
+        assert db.enrolled_device_count == 1
+        original_salt = db._cr_salt
+        original_kek = db._kek.data if db._kek else None
+
+        # Attempt to add second device with failing provider
+        failing_provider = FailingProvider()
+        with pytest.raises(ChallengeResponseError, match="Device not connected"):
+            db.enroll_device(failing_provider, label="Failing Device")
+
+        # Verify state unchanged
+        assert db.kek_mode, "KEK mode should still be enabled"
+        assert db.enrolled_device_count == 1, "Should still have only 1 device"
+        assert db._cr_salt == original_salt, "Salt should be unchanged"
+        assert db._kek is not None and db._kek.data == original_kek, "KEK unchanged"
 
 
 class TestKekModeRoundtrip:

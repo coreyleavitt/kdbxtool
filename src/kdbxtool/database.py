@@ -564,12 +564,18 @@ class Database:
         if device_id is None:
             device_id = "default"
 
-        # Generate or use existing salt
-        if self._cr_salt is None:
-            self._cr_salt = generate_salt()
+        # Use existing salt or generate a temporary one for testing
+        # We don't store the salt until after the provider is verified
+        salt = self._cr_salt if self._cr_salt is not None else generate_salt()
 
-        # Get challenge-response from provider
-        response = provider.challenge_response(self._cr_salt)
+        # Test the provider BEFORE modifying any state
+        # This ensures enrollment is atomic - either fully succeeds or no state changes
+        response = provider.challenge_response(salt)
+
+        # Provider succeeded - now we can safely modify state
+        # Store the salt if this is the first enrollment
+        if self._cr_salt is None:
+            self._cr_salt = salt
 
         # First enrollment: generate new KEK
         if not self._kek_mode:

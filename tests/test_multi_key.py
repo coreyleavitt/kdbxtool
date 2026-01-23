@@ -548,9 +548,7 @@ class TestKekModeErrorPaths:
 
         # Right device, wrong password should fail
         with pytest.raises(AuthenticationError):
-            Database.open(
-                db_path, password="wrong_password", challenge_response_provider=provider
-            )
+            Database.open(db_path, password="wrong_password", challenge_response_provider=provider)
 
     def test_right_password_wrong_device(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that wrong device fails even with correct password."""
@@ -565,9 +563,7 @@ class TestKekModeErrorPaths:
         # Right password, wrong device should fail
         wrong_provider = MockYubiKey.with_secret(b"wrong_secret_here!!!")
         with pytest.raises(AuthenticationError):
-            Database.open(
-                db_path, password="password", challenge_response_provider=wrong_provider
-            )
+            Database.open(db_path, password="password", challenge_response_provider=wrong_provider)
 
     def test_corrupted_file_fails(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that corrupted file data causes appropriate failure."""
@@ -594,9 +590,7 @@ class TestKekModeErrorPaths:
 
         # Should fail with some error (corrupted data, auth failure, or database error)
         with pytest.raises((AuthenticationError, DatabaseError, CorruptedDataError)):
-            Database.open(
-                db_path, password="password", challenge_response_provider=provider
-            )
+            Database.open(db_path, password="password", challenge_response_provider=provider)
 
     def test_error_message_no_sensitive_data(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that error messages don't reveal sensitive information."""
@@ -610,9 +604,7 @@ class TestKekModeErrorPaths:
 
         wrong_provider = MockYubiKey.with_secret(b"wrong_secret_here!!!")
         try:
-            Database.open(
-                db_path, password="password", challenge_response_provider=wrong_provider
-            )
+            Database.open(db_path, password="password", challenge_response_provider=wrong_provider)
             pytest.fail("Should have raised AuthenticationError")
         except AuthenticationError as e:
             error_msg = str(e).lower()
@@ -909,9 +901,7 @@ class TestDisableKekMode:
         assert len(entries) == 1
         assert entries[0].password == "secret_value"
 
-    def test_disable_kek_mode_requires_credentials(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_disable_kek_mode_requires_credentials(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that disable_kek_mode requires password or keyfile."""
         from pathlib import Path
 
@@ -923,9 +913,7 @@ class TestDisableKekMode:
         db.save(db_path)
 
         # Open and clear credentials (simulating edge case)
-        db2 = Database.open(
-            db_path, password="password", challenge_response_provider=provider
-        )
+        db2 = Database.open(db_path, password="password", challenge_response_provider=provider)
 
         # Manually clear credentials to test the check
         db2._password = None
@@ -934,9 +922,7 @@ class TestDisableKekMode:
         with pytest.raises(DatabaseError, match="password or keyfile"):
             db2.disable_kek_mode()
 
-    def test_disable_kek_mode_not_in_kek_mode(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_disable_kek_mode_not_in_kek_mode(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that disable_kek_mode fails if not in KEK mode."""
         db = Database.create(password="password")
         assert not db.kek_mode
@@ -944,9 +930,7 @@ class TestDisableKekMode:
         with pytest.raises(DatabaseError, match="not in KEK mode"):
             db.disable_kek_mode()
 
-    def test_disable_kek_mode_with_multiple_devices(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_disable_kek_mode_with_multiple_devices(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test disable_kek_mode removes all devices."""
         from pathlib import Path
 
@@ -997,9 +981,7 @@ class TestDisableKekMode:
         db.save(db_path)
 
         # Open with device, disable KEK, save again
-        db2 = Database.open(
-            db_path, password="password", challenge_response_provider=provider
-        )
+        db2 = Database.open(db_path, password="password", challenge_response_provider=provider)
         db2.disable_kek_mode()
         db2.save(db_path)
 
@@ -1039,17 +1021,13 @@ class TestRotateKek:
         db.save(db_path)
 
         # Open and rotate KEK
-        db2 = Database.open(
-            db_path, password="password", challenge_response_provider=provider
-        )
+        db2 = Database.open(db_path, password="password", challenge_response_provider=provider)
 
         db2.rotate_kek({"Primary": provider})
         db2.save(db_path)
 
         # Should still work with same device
-        db3 = Database.open(
-            db_path, password="password", challenge_response_provider=provider
-        )
+        db3 = Database.open(db_path, password="password", challenge_response_provider=provider)
         assert db3.kek_mode
         assert db3.enrolled_device_count == 1
 
@@ -1057,9 +1035,7 @@ class TestRotateKek:
         assert len(entries) == 1
         assert entries[0].password == "secret_value"
 
-    def test_rotate_kek_invalidates_old_device(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_rotate_kek_invalidates_old_device(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that KEK rotation with different devices invalidates old one."""
         from pathlib import Path
 
@@ -1076,31 +1052,23 @@ class TestRotateKek:
         db.save(db_path)
 
         # Open with old device and rotate to new device
-        db2 = Database.open(
-            db_path, password="password", challenge_response_provider=old_provider
-        )
+        db2 = Database.open(db_path, password="password", challenge_response_provider=old_provider)
 
         db2.rotate_kek({"New Device": new_provider})
         db2.save(db_path)
 
         # Old device should no longer work
         with pytest.raises(AuthenticationError):
-            Database.open(
-                db_path, password="password", challenge_response_provider=old_provider
-            )
+            Database.open(db_path, password="password", challenge_response_provider=old_provider)
 
         # New device should work
-        db3 = Database.open(
-            db_path, password="password", challenge_response_provider=new_provider
-        )
+        db3 = Database.open(db_path, password="password", challenge_response_provider=new_provider)
         assert db3.kek_mode
 
         entries = db3.find_entries(title="Secret")
         assert len(entries) == 1
 
-    def test_rotate_kek_multiple_devices(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_rotate_kek_multiple_devices(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test KEK rotation with multiple devices."""
         from pathlib import Path
 
@@ -1117,31 +1085,25 @@ class TestRotateKek:
         db.save(db_path)
 
         # Open and rotate with devices 2 and 3 (dropping device 1)
-        db2 = Database.open(
-            db_path, password="password", challenge_response_provider=provider1
-        )
+        db2 = Database.open(db_path, password="password", challenge_response_provider=provider1)
 
-        db2.rotate_kek({
-            "Device2": provider2,
-            "Device3": provider3,
-        })
+        db2.rotate_kek(
+            {
+                "Device2": provider2,
+                "Device3": provider3,
+            }
+        )
         db2.save(db_path)
 
         # Device 1 should no longer work
         with pytest.raises(AuthenticationError):
-            Database.open(
-                db_path, password="password", challenge_response_provider=provider1
-            )
+            Database.open(db_path, password="password", challenge_response_provider=provider1)
 
         # Devices 2 and 3 should work
-        db3 = Database.open(
-            db_path, password="password", challenge_response_provider=provider2
-        )
+        db3 = Database.open(db_path, password="password", challenge_response_provider=provider2)
         assert db3.enrolled_device_count == 2
 
-        db4 = Database.open(
-            db_path, password="password", challenge_response_provider=provider3
-        )
+        db4 = Database.open(db_path, password="password", challenge_response_provider=provider3)
         assert db4.enrolled_device_count == 2
 
     def test_rotate_kek_not_in_kek_mode(self) -> None:
@@ -1152,9 +1114,7 @@ class TestRotateKek:
         with pytest.raises(DatabaseError, match="not in KEK mode"):
             db.rotate_kek({"Device": provider})
 
-    def test_rotate_kek_empty_providers(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_rotate_kek_empty_providers(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that rotate_kek fails with empty providers dict."""
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
@@ -1181,9 +1141,7 @@ class TestRotateKek:
         db.save(db_path)
 
         # Simulate: device compromised, revoke and rotate
-        db2 = Database.open(
-            db_path, password="password", challenge_response_provider=backup
-        )
+        db2 = Database.open(db_path, password="password", challenge_response_provider=backup)
 
         db2.revoke_device("Compromised")
         db2.rotate_kek({"Backup": backup})
@@ -1191,14 +1149,10 @@ class TestRotateKek:
 
         # Compromised device cannot open (even if attacker has old backup)
         with pytest.raises(AuthenticationError):
-            Database.open(
-                db_path, password="password", challenge_response_provider=compromised
-            )
+            Database.open(db_path, password="password", challenge_response_provider=compromised)
 
         # Backup still works
-        db3 = Database.open(
-            db_path, password="password", challenge_response_provider=backup
-        )
+        db3 = Database.open(db_path, password="password", challenge_response_provider=backup)
         assert db3.enrolled_device_count == 1
 
         entries = db3.find_entries(title="Secret")
@@ -1227,16 +1181,12 @@ class TestRotateKek:
         db.save(db_path)
 
         # Open and rotate KEK
-        db2 = Database.open(
-            db_path, password="password", challenge_response_provider=provider
-        )
+        db2 = Database.open(db_path, password="password", challenge_response_provider=provider)
         db2.rotate_kek({"Primary": provider})
         db2.save(db_path)
 
         # Verify all content preserved
-        db3 = Database.open(
-            db_path, password="password", challenge_response_provider=provider
-        )
+        db3 = Database.open(db_path, password="password", challenge_response_provider=provider)
 
         entries = list(db3.iter_entries())
         assert len(entries) == 2

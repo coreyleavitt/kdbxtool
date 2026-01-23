@@ -70,6 +70,7 @@ def _hkdf_sha256(ikm: bytes, info: bytes, length: int = 32, salt: bytes = b"") -
 
     return okm[:length]
 
+
 # CustomData keys for KEK mode storage (strings to match header.public_custom_data)
 CR_VERSION_KEY = "KDBXTOOL_CR_VERSION"
 CR_SALT_KEY = "KDBXTOOL_CR_SALT"

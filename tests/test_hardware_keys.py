@@ -612,9 +612,7 @@ class TestKeePassXCCompatibility:
         entries = db2.find_entries(title="Compat Test")
         assert len(entries) == 1
 
-    def test_compat_vs_kek_mode_incompatible(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_compat_vs_kek_mode_incompatible(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that KEK mode databases cannot be opened without device."""
         from pathlib import Path
 

@@ -533,6 +533,95 @@ class TestKekModeRoundtrip:
             Database.open(db_path, password="password")
 
 
+class TestKekModeErrorPaths:
+    """Tests for KEK mode error handling and edge cases."""
+
+    def test_wrong_password_right_device(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that wrong password fails even with correct device."""
+        from pathlib import Path
+
+        db = Database.create(password="correct_password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+        db_path = Path(str(tmp_path)) / "test.kdbx"
+        db.save(db_path)
+
+        # Right device, wrong password should fail
+        with pytest.raises(AuthenticationError):
+            Database.open(
+                db_path, password="wrong_password", challenge_response_provider=provider
+            )
+
+    def test_right_password_wrong_device(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that wrong device fails even with correct password."""
+        from pathlib import Path
+
+        db = Database.create(password="password")
+        correct_provider = MockYubiKey.with_test_secret()
+        db.enroll_device(correct_provider, label="Primary")
+        db_path = Path(str(tmp_path)) / "test.kdbx"
+        db.save(db_path)
+
+        # Right password, wrong device should fail
+        wrong_provider = MockYubiKey.with_secret(b"wrong_secret_here!!!")
+        with pytest.raises(AuthenticationError):
+            Database.open(
+                db_path, password="password", challenge_response_provider=wrong_provider
+            )
+
+    def test_corrupted_file_fails(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that corrupted file data causes appropriate failure."""
+        from pathlib import Path
+
+        from kdbxtool.exceptions import CorruptedDataError
+
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+        db_path = Path(str(tmp_path)) / "test.kdbx"
+        db.save(db_path)
+
+        # Read and corrupt the file header
+        with open(db_path, "rb") as f:
+            data = bytearray(f.read())
+
+        # Corrupt bytes in the header area
+        for i in range(200, 300):
+            data[i] ^= 0xFF  # Flip bits
+
+        with open(db_path, "wb") as f:
+            f.write(data)
+
+        # Should fail with some error (corrupted data, auth failure, or database error)
+        with pytest.raises((AuthenticationError, DatabaseError, CorruptedDataError)):
+            Database.open(
+                db_path, password="password", challenge_response_provider=provider
+            )
+
+    def test_error_message_no_sensitive_data(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that error messages don't reveal sensitive information."""
+        from pathlib import Path
+
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+        db_path = Path(str(tmp_path)) / "test.kdbx"
+        db.save(db_path)
+
+        wrong_provider = MockYubiKey.with_secret(b"wrong_secret_here!!!")
+        try:
+            Database.open(
+                db_path, password="password", challenge_response_provider=wrong_provider
+            )
+            pytest.fail("Should have raised AuthenticationError")
+        except AuthenticationError as e:
+            error_msg = str(e).lower()
+            # Error should not reveal device count or specific device info
+            assert "1" not in error_msg or "device" not in error_msg
+            assert "primary" not in error_msg
+            assert "yubikey" not in error_msg
+
+
 class TestKekModeWithFido2:
     """Tests for KEK mode with FIDO2 devices."""
 

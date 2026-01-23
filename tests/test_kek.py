@@ -168,7 +168,7 @@ class TestWrapUnwrapKek:
         assert unwrapped.data == kek
 
     def test_wrap_returns_correct_size(self) -> None:
-        """Test that wrap_kek returns 60 bytes."""
+        """Test that wrap_kek returns 64 bytes (nonce 16 + tag 16 + ciphertext 32)."""
         kek = b"k" * 32
         cr_response = b"r" * 20
 
@@ -302,6 +302,38 @@ class TestWrapUnwrapKek:
     def test_min_cr_response_length_constant(self) -> None:
         """Test that minimum CR response length is 16 bytes (128 bits)."""
         assert MIN_CR_RESPONSE_LENGTH == 16
+
+    def test_unwrap_truncated_at_nonce_boundary(self) -> None:
+        """Test that unwrap fails when truncated within nonce (first 16 bytes)."""
+        with pytest.raises(ValueError, match="Invalid wrapped KEK length"):
+            unwrap_kek(b"x" * 15, b"r" * 20)  # Truncated nonce
+
+    def test_unwrap_truncated_at_tag_boundary(self) -> None:
+        """Test that unwrap fails when truncated within tag (bytes 16-32)."""
+        with pytest.raises(ValueError, match="Invalid wrapped KEK length"):
+            unwrap_kek(b"x" * 20, b"r" * 20)  # Has nonce but truncated tag
+
+    def test_unwrap_truncated_at_ciphertext_boundary(self) -> None:
+        """Test that unwrap fails when truncated within ciphertext (bytes 32-64)."""
+        with pytest.raises(ValueError, match="Invalid wrapped KEK length"):
+            unwrap_kek(b"x" * 40, b"r" * 20)  # Has nonce+tag but truncated ciphertext
+
+    def test_wrap_with_very_long_cr_response(self) -> None:
+        """Test that wrap/unwrap works with very long CR responses."""
+        kek = b"k" * 32
+        # 1KB response - much longer than typical
+        long_response = b"x" * 1024
+
+        wrapped = wrap_kek(kek, long_response)
+        unwrapped = unwrap_kek(wrapped, long_response)
+
+        assert unwrapped.data == kek
+
+    def test_wrap_with_empty_cr_response_fails(self) -> None:
+        """Test that wrap_kek rejects empty CR response."""
+        kek = b"k" * 32
+        with pytest.raises(ValueError, match="CR response too short"):
+            wrap_kek(kek, b"")
 
 
 class TestDeriveFinalKey:

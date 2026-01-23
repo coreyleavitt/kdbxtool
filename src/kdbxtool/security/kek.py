@@ -76,7 +76,7 @@ CR_SALT_KEY = "KDBXTOOL_CR_SALT"
 CR_DEVICE_PREFIX = "KDBXTOOL_CR_DEVICE_"
 
 # Version constants
-VERSION_LEGACY = b"\x01"  # Direct CR mixing (KeePassXC compatible, YubiKey HMAC-SHA1 only)
+VERSION_COMPAT = b"\x01"  # Direct CR mixing (KeePassXC-compatible, YubiKey HMAC-SHA1 only)
 VERSION_KEK = b"\x02"  # KEK wrapping (multi-key support)
 
 # Wrapped KEK size: nonce (16, PyCryptodome default) + tag (16) + ciphertext (32) = 64 bytes

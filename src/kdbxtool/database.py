@@ -53,7 +53,7 @@ from .security.kek import (
     CR_SALT_KEY,
     CR_VERSION_KEY,
     VERSION_KEK,
-    VERSION_LEGACY,
+    VERSION_COMPAT,
     EnrolledDevice,
     deserialize_device_entry,
     generate_kek,
@@ -436,7 +436,7 @@ class Database:
         with its unique challenge-response output.
 
         Returns:
-            True if database uses KEK mode, False for legacy mode or no CR
+            True if database uses KEK mode, False for KeePassXC-compatible mode or no CR
         """
         return self._kek_mode
 
@@ -504,8 +504,8 @@ class Database:
 
         WARNING: KEK mode databases are NOT compatible with KeePassXC, KeePassDX,
         or other KeePass applications. Only use KEK mode if you exclusively use
-        kdbxtool. For KeePassXC compatibility, use legacy mode with a single
-        YubiKey HMAC-SHA1 via the `legacy_mode=True` parameter on save().
+        kdbxtool. For KeePassXC compatibility, use the challenge_response_provider
+        parameter on save() instead of enroll_device().
 
         Args:
             provider: The device provider (YubiKeyHmacSha1, Fido2HmacSecret, etc.)
@@ -527,23 +527,23 @@ class Database:
         if self._header is None:
             raise DatabaseError("Cannot enroll device: database not initialized")
 
-        # Check if database was opened with legacy CR mode (not KEK mode)
-        # In legacy mode, the CR response is mixed directly into composite key derivation,
+        # Check if database was opened with KeePassXC-compatible CR mode (not KEK mode)
+        # In compat mode, the CR response is mixed directly into composite key derivation,
         # so we can't just add KEK mode on top - it would break the original device.
         cr_version = self._header.public_custom_data.get(CR_VERSION_KEY)
-        if cr_version == VERSION_LEGACY:
+        if cr_version == VERSION_COMPAT:
             raise DatabaseError(
-                "Cannot enroll device: database uses legacy challenge-response mode. "
-                "Legacy mode does not support multi-device enrollment. "
+                "Cannot enroll device: database uses KeePassXC-compatible challenge-response. "
+                "This mode does not support multi-device enrollment. "
                 "Create a new database with enroll_device() to use KEK mode."
             )
 
-        # Also check if we have a legacy provider without KEK mode
+        # Also check if we have a compat-mode provider without KEK mode
         # (database was opened with challenge_response_provider but no KEK)
         if self._challenge_response_provider is not None and not self._kek_mode:
             raise DatabaseError(
-                "Cannot enroll device: database was opened with legacy challenge-response. "
-                "Legacy mode does not support multi-device enrollment. "
+                "Cannot enroll device: database was opened with KeePassXC-compatible mode. "
+                "This mode does not support multi-device enrollment. "
                 "To migrate, create a new database and enroll devices using enroll_device()."
             )
 
@@ -721,7 +721,7 @@ class Database:
             self._kek = None
         self._kek_mode = False
         self._cr_salt = None
-        # Clear challenge-response provider to prevent legacy mode key derivation
+        # Clear challenge-response provider to prevent compat mode key derivation
         self._challenge_response_provider = None
 
         logger.info("Disabled KEK mode - database now uses password/keyfile only")
@@ -992,11 +992,11 @@ class Database:
             kek_data: bytes | None = None
             cr_salt: bytes | None = None
         else:
-            # Check for KEK mode vs legacy mode
+            # Check for KEK mode vs KeePassXC-compatible mode
             cr_version = header.public_custom_data.get(CR_VERSION_KEY)
 
             # Check for unknown future versions
-            if cr_version is not None and cr_version not in (VERSION_LEGACY, VERSION_KEK):
+            if cr_version is not None and cr_version not in (VERSION_COMPAT, VERSION_KEK):
                 version_str = cr_version.hex() if isinstance(cr_version, bytes) else str(cr_version)
                 raise DatabaseError(
                     f"Unknown challenge-response version: {version_str}. "
@@ -1029,7 +1029,7 @@ class Database:
                     kek=kek_data,
                 )
             else:
-                # Legacy mode: CR response mixed into composite key
+                # KeePassXC-compatible mode: CR response mixed into composite key
                 challenge_response_data: bytes | None = None
                 if challenge_response_provider is not None:
                     response = challenge_response_provider.challenge_response(header.kdf_salt)
@@ -1561,10 +1561,10 @@ class Database:
             kek_data = self._kek.data
             logger.debug("Using KEK mode for encryption")
         elif challenge_response_provider is not None:
-            # Legacy mode: CR response mixed into composite key
+            # KeePassXC-compatible mode: CR response mixed into composite key
             response = challenge_response_provider.challenge_response(self._header.kdf_salt)
             challenge_response_data = response.data
-            logger.debug("Using legacy CR mode for encryption")
+            logger.debug("Using KeePassXC-compatible CR mode for encryption")
 
         # Sync binaries to inner header (preserve protection flags where possible)
         existing_binaries = self._inner_header.binaries

@@ -9,7 +9,7 @@ from kdbxtool.security.kek import (
     HKDF_INFO_KEK_WRAP,
     MIN_CR_RESPONSE_LENGTH,
     VERSION_KEK,
-    VERSION_LEGACY,
+    VERSION_COMPAT,
     WRAPPED_KEK_SIZE,
     EnrolledDevice,
     _hkdf_sha256,
@@ -100,7 +100,7 @@ class TestConstants:
 
     def test_version_constants(self) -> None:
         """Test version constant values."""
-        assert VERSION_LEGACY == b"\x01"
+        assert VERSION_COMPAT == b"\x01"
         assert VERSION_KEK == b"\x02"
 
     def test_custom_data_keys(self) -> None:

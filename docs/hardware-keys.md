@@ -8,7 +8,7 @@ kdbxtool supports hardware security keys (YubiKeys, FIDO2 devices) for additiona
 |---------|----------|-----------|-----------|-------------|
 | Password only | Yes | Yes | Yes | Yes |
 | Keyfile | Yes | Yes | Yes | Yes |
-| YubiKey HMAC-SHA1 (Legacy) | Yes | Yes | Yes | Plugin |
+| YubiKey HMAC-SHA1 (KeePassXC-compatible) | Yes | Yes | Yes | Plugin |
 | YubiKey HMAC-SHA1 (KEK) | Yes | No | No | No |
 | FIDO2 hmac-secret | Yes | No | No | No |
 | Multiple hardware keys | Yes | No* | No | No |
@@ -19,7 +19,7 @@ kdbxtool supports hardware security keys (YubiKeys, FIDO2 devices) for additiona
 
 kdbxtool supports two challenge-response modes:
 
-#### Legacy Mode (KeePassXC Compatible)
+#### KeePassXC-Compatible Mode
 
 - Single YubiKey HMAC-SHA1 only
 - Challenge-response mixed directly into key derivation
@@ -32,7 +32,7 @@ from kdbxtool import Database, YubiKeyHmacSha1
 db = Database.create(password="secret")
 yubikey = YubiKeyHmacSha1(slot=2)
 
-# Legacy mode - compatible with KeePassXC
+# KeePassXC-compatible mode
 db.save("vault.kdbx", challenge_response_provider=yubikey)
 ```
 
@@ -64,8 +64,8 @@ db2 = Database.open("vault.kdbx", password="secret",
 
 | Use Case | Recommended Mode |
 |----------|------------------|
-| Need KeePassXC/mobile access | Legacy |
-| Single YubiKey, no backup needed | Legacy |
+| Need KeePassXC/mobile access | KeePassXC-compatible |
+| Single YubiKey, no backup needed | KeePassXC-compatible |
 | Multiple backup keys | KEK |
 | FIDO2 devices | KEK |
 | Mixed device types (YubiKey + FIDO2) | KEK |

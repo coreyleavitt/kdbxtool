@@ -65,7 +65,7 @@ class TestHmacSha1ResponseSize:
 
 
 class TestDeriveCompositeKeyWithYubiKey:
-    """Tests for derive_composite_key with YubiKey HMAC-SHA1 response (legacy mode)."""
+    """Tests for derive_composite_key with YubiKey HMAC-SHA1 response (KeePassXC-compatible mode)."""
 
     def test_yubikey_response_only(self) -> None:
         """Test composite key from YubiKey HMAC-SHA1 response only."""
@@ -139,20 +139,20 @@ class TestDeriveCompositeKeyWithYubiKey:
 
     def test_invalid_yubikey_response_size(self) -> None:
         """Test that wrong response size raises ValueError."""
-        # 16 bytes is invalid (legacy mode only supports 20-byte HMAC-SHA1)
+        # 16 bytes is invalid (KeePassXC-compatible mode only supports 20-byte HMAC-SHA1)
         with pytest.raises(ValueError, match="only supports YubiKey HMAC-SHA1"):
             derive_composite_key(yubikey_hmac_response=os.urandom(16))
 
     def test_invalid_yubikey_response_too_long(self) -> None:
         """Test that too-long response raises ValueError."""
-        # 64 bytes is invalid (legacy mode only supports 20-byte HMAC-SHA1)
+        # 64 bytes is invalid (KeePassXC-compatible mode only supports 20-byte HMAC-SHA1)
         with pytest.raises(ValueError, match="only supports YubiKey HMAC-SHA1"):
             derive_composite_key(yubikey_hmac_response=os.urandom(64))
 
-    def test_fido2_response_rejected_in_legacy_mode(self) -> None:
-        """Test that 32-byte FIDO2 response is rejected in legacy mode.
+    def test_fido2_response_rejected_in_compat_mode(self) -> None:
+        """Test that 32-byte FIDO2 response is rejected in KeePassXC-compatible mode.
 
-        FIDO2 providers must use KEK mode, not legacy mode (derive_composite_key).
+        FIDO2 providers must use KEK mode, not KeePassXC-compatible mode.
         """
         with pytest.raises(ValueError, match="FIDO2.*must use KEK mode"):
             derive_composite_key(yubikey_hmac_response=os.urandom(32))

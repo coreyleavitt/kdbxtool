@@ -129,7 +129,7 @@ class TestFido2WithDatabase:
 
     NOTE: These tests are marked xfail because FIDO2 requires KEK mode,
     which is not yet fully implemented in database.py. FIDO2 responses
-    (32 bytes) cannot be passed to derive_composite_key() in legacy mode.
+    (32 bytes) cannot be passed to derive_composite_key() in KeePassXC-compatible mode.
     """
 
     def test_database_create_with_fido2_provider(self, tmp_path: pytest.TempPathFactory) -> None:

@@ -43,7 +43,7 @@ ykman otp info
 
 **Important**: The secret is stored on the YubiKey and cannot be retrieved. For testing with multiple YubiKeys, you must either:
 1. Use different YubiKeys with different secrets (KEK mode supports this)
-2. Program the same secret onto multiple YubiKeys (legacy mode requires this)
+2. Program the same secret onto multiple YubiKeys (KeePassXC-compatible mode requires this)
 
 ### Verify YubiKey is Detected
 
@@ -78,7 +78,7 @@ YUBIKEY_SLOT=1 pytest -m hardware -v
 | Class | Description | Mode |
 |-------|-------------|------|
 | `TestYubiKeyHardware` | Low-level provider tests | N/A |
-| `TestDatabaseYubiKeyHardware` | Database integration (legacy) | Legacy |
+| `TestDatabaseYubiKeyHardware` | Database integration | KeePassXC-compatible |
 | `TestKekModeHardware` | Multi-device enrollment | KEK |
 | `TestKeePassXCCompatibility` | Format compatibility | Both |
 
@@ -105,21 +105,21 @@ tests/test_hardware_keys.py::TestKekModeHardware::test_list_enrolled_devices PAS
 tests/test_hardware_keys.py::TestKekModeHardware::test_disable_kek_mode_migration PASSED
 tests/test_hardware_keys.py::TestKekModeHardware::test_rotate_kek PASSED
 tests/test_hardware_keys.py::TestKekModeHardware::test_revoke_device_prevents_access PASSED
-tests/test_hardware_keys.py::TestKeePassXCCompatibility::test_legacy_mode_format PASSED
-tests/test_hardware_keys.py::TestKeePassXCCompatibility::test_legacy_vs_kek_mode_incompatible PASSED
+tests/test_hardware_keys.py::TestKeePassXCCompatibility::test_compat_mode_format PASSED
+tests/test_hardware_keys.py::TestKeePassXCCompatibility::test_compat_vs_kek_mode_incompatible PASSED
 ```
 
 ## Understanding Test Modes
 
-### Legacy Mode Tests
+### KeePassXC-Compatible Mode Tests
 
-Legacy mode tests use the `challenge_response_provider` parameter:
+KeePassXC-compatible mode tests use the `challenge_response_provider` parameter:
 
 ```python
-# Save in legacy mode (KeePassXC compatible)
+# Save in KeePassXC-compatible mode
 db.save(path, challenge_response_provider=yubikey)
 
-# Open in legacy mode
+# Open in KeePassXC-compatible mode
 db = Database.open(path, password="secret", challenge_response_provider=yubikey)
 ```
 
@@ -247,9 +247,9 @@ db2 = Database.open("vault.kdbx", password="secret",
 
 ## KeePassXC Compatibility Testing
 
-To verify legacy mode compatibility with KeePassXC:
+To verify KeePassXC-compatible mode works with KeePassXC:
 
-1. Create a database with kdbxtool in legacy mode:
+1. Create a database with kdbxtool in KeePassXC-compatible mode:
 ```python
 from kdbxtool import Database, YubiKeyHmacSha1
 

@@ -358,26 +358,26 @@ class TestKekModeEnrollment:
         with pytest.raises(ValueError, match="not found"):
             db.revoke_device("Unknown")
 
-    def test_enroll_on_legacy_database_fails(self, tmp_path: pytest.TempPathFactory) -> None:
-        """Test that enrolling on a legacy mode database fails."""
+    def test_enroll_on_compat_database_fails(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that enrolling on a KeePassXC-compatible mode database fails."""
         from pathlib import Path
 
         from kdbxtool.exceptions import DatabaseError
 
-        # Create database with legacy mode (using challenge_response_provider directly)
+        # Create database with KeePassXC-compatible mode (using challenge_response_provider directly)
         db = Database.create(password="password")
-        legacy_provider = MockYubiKey.with_test_secret()
-        db_path = Path(str(tmp_path)) / "legacy.kdbx"
-        db.save(db_path, challenge_response_provider=legacy_provider)
+        compat_provider = MockYubiKey.with_test_secret()
+        db_path = Path(str(tmp_path)) / "compat.kdbx"
+        db.save(db_path, challenge_response_provider=compat_provider)
 
-        # Open with legacy mode
+        # Open with KeePassXC-compatible mode
         db2 = Database.open(
-            db_path, password="password", challenge_response_provider=legacy_provider
+            db_path, password="password", challenge_response_provider=compat_provider
         )
 
         # Try to enroll another device - should fail
         new_provider = MockYubiKey.with_secret(b"different_secret_20!")
-        with pytest.raises(DatabaseError, match="legacy"):
+        with pytest.raises(DatabaseError, match="KeePassXC-compatible"):
             db2.enroll_device(new_provider, label="New Device")
 
     def test_enrollment_atomic_on_provider_failure(self) -> None:

@@ -5,12 +5,12 @@ They are marked with @pytest.mark.hardware and skipped in CI.
 
 Test Classes:
     TestYubiKeyHardware: Low-level YubiKey provider tests
-    TestDatabaseYubiKeyHardware: Legacy mode database tests (KeePassXC compatible)
+    TestDatabaseYubiKeyHardware: KeePassXC-compatible mode database tests
     TestKekModeHardware: KEK mode tests (multi-device support)
-    TestKeePassXCCompatibility: Legacy vs KEK mode format verification
+    TestKeePassXCCompatibility: Compat vs KEK mode format verification
 
 To run these tests locally:
-    pytest -m hardware tests/test_yubikey_hardware.py -v
+    pytest -m hardware tests/test_hardware_keys.py -v
 
 To configure your YubiKey for testing:
     ykman otp chalresp -g 2  # Generate random secret for slot 2
@@ -19,14 +19,16 @@ Environment variables:
     YUBIKEY_SERIAL: Serial number of YubiKey to use (optional, uses first device)
     YUBIKEY_SLOT: Slot to use (default: 2)
 
-KEK Mode vs Legacy Mode:
-    Legacy mode: Uses challenge_response_provider parameter in save/open.
-                 Creates KeePassXC/KeePassDX compatible databases.
-                 Single device only.
+KEK Mode vs KeePassXC-Compatible Mode:
+    KeePassXC-compatible mode:
+        Uses challenge_response_provider parameter in save/open.
+        Creates KeePassXC/KeePassDX compatible databases.
+        Single device only.
 
-    KEK mode:    Uses enroll_device() to add devices.
-                 Supports multiple backup devices.
-                 NOT compatible with KeePassXC/KeePassDX.
+    KEK mode:
+        Uses enroll_device() to add devices.
+        Supports multiple backup devices.
+        NOT compatible with KeePassXC/KeePassDX.
 """
 
 import os
@@ -577,29 +579,28 @@ class TestKekModeHardware:
 
 @requires_yubikey
 class TestKeePassXCCompatibility:
-    """Tests for KeePassXC compatibility in legacy mode.
+    """Tests for KeePassXC-compatible mode.
 
-    Legacy mode saves using challenge_response_provider parameter (not enroll_device),
-    which produces databases compatible with KeePassXC and KeePassDX.
+    KeePassXC-compatible mode saves using challenge_response_provider parameter
+    (not enroll_device), which produces databases compatible with KeePassXC and KeePassDX.
     """
 
-    def test_legacy_mode_format(self, tmp_path: pytest.TempPathFactory) -> None:
-        """Test that legacy mode creates KeePassXC-compatible format."""
+    def test_compat_mode_format(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that KeePassXC-compatible mode creates correct format."""
         from pathlib import Path
 
         from kdbxtool import Database, YubiKeyHmacSha1
-        from kdbxtool.security.kek import CR_VERSION_KEY, VERSION_LEGACY
 
         slot, serial = get_test_yubikey_config()
         provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)
-        db_path = Path(str(tmp_path)) / "legacy_compat.kdbx"
+        db_path = Path(str(tmp_path)) / "compat.kdbx"
 
-        # Create database in legacy mode
+        # Create database in KeePassXC-compatible mode
         db = Database.create(password="testpassword")
-        db.root_group.create_entry(title="Legacy Test", username="user")
+        db.root_group.create_entry(title="Compat Test", username="user")
         db.save(db_path, challenge_response_provider=provider)
 
-        # Verify legacy mode markers
+        # Verify not in KEK mode
         assert db.kek_mode is False
 
         # Reopen and verify
@@ -609,10 +610,10 @@ class TestKeePassXCCompatibility:
             challenge_response_provider=provider,
         )
         assert db2.kek_mode is False
-        entries = db2.find_entries(title="Legacy Test")
+        entries = db2.find_entries(title="Compat Test")
         assert len(entries) == 1
 
-    def test_legacy_vs_kek_mode_incompatible(
+    def test_compat_vs_kek_mode_incompatible(
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
         """Test that KEK mode databases cannot be opened without device."""
@@ -623,22 +624,22 @@ class TestKeePassXCCompatibility:
 
         slot, serial = get_test_yubikey_config()
         provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)
-        legacy_path = Path(str(tmp_path)) / "legacy.kdbx"
+        compat_path = Path(str(tmp_path)) / "compat.kdbx"
         kek_path = Path(str(tmp_path)) / "kek.kdbx"
 
-        # Create legacy mode database
-        db_legacy = Database.create(password="testpassword")
-        db_legacy.save(legacy_path, challenge_response_provider=provider)
+        # Create KeePassXC-compatible mode database
+        db_compat = Database.create(password="testpassword")
+        db_compat.save(compat_path, challenge_response_provider=provider)
 
         # Create KEK mode database
         db_kek = Database.create(password="testpassword")
         db_kek.enroll_device(provider, label="Primary")
         db_kek.save(kek_path)
 
-        # Legacy cannot be opened without device
+        # Compat mode cannot be opened without device
         with pytest.raises(AuthenticationError):
-            Database.open(legacy_path, password="testpassword")
+            Database.open(compat_path, password="testpassword")
 
-        # KEK cannot be opened without device
+        # KEK mode cannot be opened without device
         with pytest.raises(AuthenticationError):
             Database.open(kek_path, password="testpassword")

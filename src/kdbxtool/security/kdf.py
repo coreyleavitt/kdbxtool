@@ -428,11 +428,11 @@ def derive_composite_key(
     key via derive_final_key() AFTER KDF. This is the recommended mode for all
     new databases and supports multiple enrolled devices.
 
-    **Legacy Mode (KeePassXC/KeePassDX compatible):**
+    **KeePassXC-Compatible Mode:**
     Pass a 20-byte YubiKey HMAC-SHA1 response to mix it directly into the
-    composite key. This provides KeePassXC compatibility but only supports
-    a single device. NOTE: Only YubiKey HMAC-SHA1 (20 bytes) is supported
-    in legacy mode. FIDO2, Trezor, and other providers MUST use KEK mode.
+    composite key. This provides KeePassXC/KeePassDX compatibility but only
+    supports a single device. NOTE: Only YubiKey HMAC-SHA1 (20 bytes) is
+    supported in this mode. FIDO2, Trezor, and other providers MUST use KEK mode.
 
     The keyfile_key is processed according to KeePass keyfile format rules.
 
@@ -440,7 +440,7 @@ def derive_composite_key(
         password: Optional password string
         keyfile_data: Optional keyfile contents
         yubikey_hmac_response: Optional YubiKey HMAC-SHA1 response (20 bytes)
-            for LEGACY MODE ONLY. For KEK mode, pass None.
+            for KeePassXC-compatible mode ONLY. For KEK mode, pass None.
             NOTE: FIDO2 responses (32 bytes) are NOT accepted here - FIDO2
             must use KEK mode.
 
@@ -454,17 +454,17 @@ def derive_composite_key(
     if password is None and keyfile_data is None and yubikey_hmac_response is None:
         raise MissingCredentialsError()
 
-    # Legacy mode: only accept 20-byte YubiKey HMAC-SHA1 responses
+    # KeePassXC-compatible mode: only accept 20-byte YubiKey HMAC-SHA1 responses
     # FIDO2 and other providers must use KEK mode
     if yubikey_hmac_response is not None and len(yubikey_hmac_response) != 20:
         raise ValueError(
-            "Legacy mode only supports YubiKey HMAC-SHA1 (20 bytes). "
+            "KeePassXC-compatible mode only supports YubiKey HMAC-SHA1 (20 bytes). "
             f"Got {len(yubikey_hmac_response)} bytes. "
             "FIDO2 and other providers must use KEK mode."
         )
 
     logger.debug(
-        "Deriving composite key (password=%s, keyfile=%s, legacy_cr=%s)",
+        "Deriving composite key (password=%s, keyfile=%s, compat_cr=%s)",
         password is not None,
         keyfile_data is not None,
         yubikey_hmac_response is not None,
@@ -485,7 +485,7 @@ def derive_composite_key(
             parts.append(key_bytes)
 
         if yubikey_hmac_response is not None:
-            # Legacy mode: mix YubiKey HMAC-SHA1 response directly (KeePassXC compat)
+            # KeePassXC-compatible mode: mix YubiKey HMAC-SHA1 response directly
             # KeePassXC: challenge() returns SHA256 of CR key's rawKey
             challenge_result = hashlib.sha256(yubikey_hmac_response).digest()
             parts.append(challenge_result)

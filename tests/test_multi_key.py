@@ -143,41 +143,38 @@ class TestProviderRequirement:
             Database.open(db_path, password="password", challenge_response_provider=provider)
 
 
-@pytest.mark.xfail(reason="FIDO2 requires KEK mode which is not yet implemented in database.py")
 class TestMixedProviderTypes:
-    """Tests for using different provider types (YubiKey vs FIDO2).
-
-    NOTE: These tests are marked xfail because FIDO2 requires KEK mode,
-    which is not yet fully implemented in database.py.
-    """
+    """Tests for using different provider types (YubiKey vs FIDO2) in KEK mode."""
 
     def test_yubikey_database_fido2_fails(self, tmp_path: pytest.TempPathFactory) -> None:
-        """Test that FIDO2 provider fails to open YubiKey-protected database."""
+        """Test that FIDO2 provider fails to open YubiKey-enrolled database."""
         from pathlib import Path
 
         yubikey = MockYubiKey.with_test_secret()
         fido2 = MockFido2.with_test_secret()
 
         db = Database.create(password="password")
+        db.enroll_device(yubikey, label="YubiKey")
         db_path = Path(str(tmp_path)) / "yubikey_db.kdbx"
-        db.save(db_path, challenge_response_provider=yubikey)
+        db.save(db_path)
 
-        # FIDO2 should fail (different output size and algorithm)
+        # FIDO2 should fail (different CR output)
         with pytest.raises(AuthenticationError):
             Database.open(db_path, password="password", challenge_response_provider=fido2)
 
     def test_fido2_database_yubikey_fails(self, tmp_path: pytest.TempPathFactory) -> None:
-        """Test that YubiKey provider fails to open FIDO2-protected database."""
+        """Test that YubiKey provider fails to open FIDO2-enrolled database."""
         from pathlib import Path
 
         yubikey = MockYubiKey.with_test_secret()
         fido2 = MockFido2.with_test_secret()
 
         db = Database.create(password="password")
+        db.enroll_device(fido2, label="FIDO2")
         db_path = Path(str(tmp_path)) / "fido2_db.kdbx"
-        db.save(db_path, challenge_response_provider=fido2)
+        db.save(db_path)
 
-        # YubiKey should fail (different output size and algorithm)
+        # YubiKey should fail (different CR output)
         with pytest.raises(AuthenticationError):
             Database.open(db_path, password="password", challenge_response_provider=yubikey)
 

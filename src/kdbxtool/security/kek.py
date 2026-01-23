@@ -110,15 +110,20 @@ def wrap_kek(kek: bytes, cr_response: bytes) -> bytes:
     if len(kek) != 32:
         raise ValueError(f"KEK must be 32 bytes, got {len(kek)}")
 
-    # Derive AES key from CR response
-    device_key = hashlib.sha256(cr_response).digest()
+    # Derive AES key from CR response (use bytearray for zeroization)
+    device_key = bytearray(hashlib.sha256(cr_response).digest())
 
-    # Encrypt with AES-256-GCM
-    cipher = AES.new(device_key, AES.MODE_GCM)
-    ciphertext, tag = cipher.encrypt_and_digest(kek)
+    try:
+        # Encrypt with AES-256-GCM
+        cipher = AES.new(bytes(device_key), AES.MODE_GCM)
+        ciphertext, tag = cipher.encrypt_and_digest(kek)
 
-    logger.debug("Wrapped KEK for device (ciphertext length: %d)", len(ciphertext))
-    return bytes(cipher.nonce) + tag + ciphertext
+        logger.debug("Wrapped KEK for device (ciphertext length: %d)", len(ciphertext))
+        return bytes(cipher.nonce) + tag + ciphertext
+    finally:
+        # Zeroize device key from memory
+        for i in range(len(device_key)):
+            device_key[i] = 0
 
 
 def unwrap_kek(wrapped: bytes, cr_response: bytes) -> SecureBytes:
@@ -137,23 +142,28 @@ def unwrap_kek(wrapped: bytes, cr_response: bytes) -> SecureBytes:
     if len(wrapped) != WRAPPED_KEK_SIZE:
         raise ValueError(f"Invalid wrapped KEK length: {len(wrapped)}, expected {WRAPPED_KEK_SIZE}")
 
-    # Derive AES key from CR response
-    device_key = hashlib.sha256(cr_response).digest()
+    # Derive AES key from CR response (use bytearray for zeroization)
+    device_key = bytearray(hashlib.sha256(cr_response).digest())
 
-    # Parse components (16-byte nonce is PyCryptodome default)
-    nonce = wrapped[:16]
-    tag = wrapped[16:32]
-    ciphertext = wrapped[32:]
-
-    # Decrypt and verify
-    cipher = AES.new(device_key, AES.MODE_GCM, nonce=nonce)
     try:
-        kek = cipher.decrypt_and_verify(ciphertext, tag)
-    except ValueError as e:
-        raise ValueError("KEK decryption failed - wrong device or corrupted data") from e
+        # Parse components (16-byte nonce is PyCryptodome default)
+        nonce = wrapped[:16]
+        tag = wrapped[16:32]
+        ciphertext = wrapped[32:]
 
-    logger.debug("Successfully unwrapped KEK")
-    return SecureBytes(kek)
+        # Decrypt and verify
+        cipher = AES.new(bytes(device_key), AES.MODE_GCM, nonce=nonce)
+        try:
+            kek = cipher.decrypt_and_verify(ciphertext, tag)
+        except ValueError as e:
+            raise ValueError("KEK decryption failed - wrong device or corrupted data") from e
+
+        logger.debug("Successfully unwrapped KEK")
+        return SecureBytes(kek)
+    finally:
+        # Zeroize device key from memory
+        for i in range(len(device_key)):
+            device_key[i] = 0
 
 
 def derive_final_key(base_master_key: bytes, kek: bytes) -> SecureBytes:

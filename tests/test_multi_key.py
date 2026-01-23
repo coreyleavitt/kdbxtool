@@ -10,7 +10,7 @@ is a planned future enhancement. These tests cover the current provider-based AP
 
 import pytest
 
-from kdbxtool import AuthenticationError, ChallengeResponseProvider, Database
+from kdbxtool import AuthenticationError, ChallengeResponseProvider, Database, DatabaseError
 from kdbxtool.security.memory import SecureBytes
 from kdbxtool.testing import MockFido2, MockProvider, MockYubiKey
 
@@ -536,3 +536,566 @@ class TestKekModeWithFido2:
         # Open with FIDO2
         db3 = Database.open(db_path, password="password", challenge_response_provider=fido2)
         assert db3.find_entries(title="Mixed Entry")
+
+
+class TestKekModeCredentialChanges:
+    """Tests for password/keyfile changes in KEK mode.
+
+    KEK mode allows changing password/keyfile without re-enrolling devices
+    because the KEK is separate from the password-derived key.
+    """
+
+    def test_password_change_preserves_enrollment(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that changing password doesn't require re-enrollment."""
+        from pathlib import Path
+
+        db = Database.create(password="original_password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+
+        db.root_group.create_entry(title="Secret", password="secret_value")
+
+        db_path = Path(str(tmp_path)) / "password_change.kdbx"
+        db.save(db_path)
+
+        # Open and change password
+        db2 = Database.open(
+            db_path, password="original_password", challenge_response_provider=provider
+        )
+        db2.set_credentials(password="new_password")
+        db2.save(db_path)
+
+        # Should open with new password and same device
+        db3 = Database.open(db_path, password="new_password", challenge_response_provider=provider)
+        assert db3.kek_mode
+        assert db3.enrolled_device_count == 1
+
+        entries = db3.find_entries(title="Secret")
+        assert len(entries) == 1
+        assert entries[0].password == "secret_value"
+
+    def test_password_change_old_password_fails(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that old password no longer works after change."""
+        from pathlib import Path
+
+        db = Database.create(password="original_password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+
+        db_path = Path(str(tmp_path)) / "password_change_fail.kdbx"
+        db.save(db_path)
+
+        # Open and change password
+        db2 = Database.open(
+            db_path, password="original_password", challenge_response_provider=provider
+        )
+        db2.set_credentials(password="new_password")
+        db2.save(db_path)
+
+        # Old password should fail
+        with pytest.raises(AuthenticationError):
+            Database.open(
+                db_path, password="original_password", challenge_response_provider=provider
+            )
+
+    def test_add_keyfile_preserves_enrollment(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that adding a keyfile doesn't require re-enrollment."""
+        from pathlib import Path
+
+        from kdbxtool.security.keyfile import create_keyfile_bytes
+
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+
+        db.root_group.create_entry(title="Secret", password="secret_value")
+
+        db_path = Path(str(tmp_path)) / "add_keyfile.kdbx"
+        db.save(db_path)
+
+        # Open and add keyfile
+        db2 = Database.open(db_path, password="password", challenge_response_provider=provider)
+        keyfile_data = create_keyfile_bytes()
+        db2.set_credentials(password="password", keyfile_data=keyfile_data)
+        db2.save(db_path)
+
+        # Write keyfile to disk for open
+        keyfile_path = Path(str(tmp_path)) / "keyfile.key"
+        keyfile_path.write_bytes(keyfile_data)
+
+        # Should open with password + keyfile and same device
+        db3 = Database.open(
+            db_path,
+            password="password",
+            keyfile=keyfile_path,
+            challenge_response_provider=provider,
+        )
+        assert db3.kek_mode
+        assert db3.enrolled_device_count == 1
+
+        entries = db3.find_entries(title="Secret")
+        assert len(entries) == 1
+        assert entries[0].password == "secret_value"
+
+    def test_keyfile_change_preserves_enrollment(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that changing keyfile doesn't require re-enrollment."""
+        from pathlib import Path
+
+        from kdbxtool.security.keyfile import create_keyfile_bytes
+
+        keyfile1_data = create_keyfile_bytes()
+        keyfile2_data = create_keyfile_bytes()
+
+        # Write keyfiles to disk
+        keyfile1_path = Path(str(tmp_path)) / "keyfile1.key"
+        keyfile1_path.write_bytes(keyfile1_data)
+        keyfile2_path = Path(str(tmp_path)) / "keyfile2.key"
+        keyfile2_path.write_bytes(keyfile2_data)
+
+        db = Database.create(password="password", keyfile=keyfile1_path)
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+
+        db.root_group.create_entry(title="Secret", password="secret_value")
+
+        db_path = Path(str(tmp_path)) / "keyfile_change.kdbx"
+        db.save(db_path)
+
+        # Open and change keyfile
+        db2 = Database.open(
+            db_path,
+            password="password",
+            keyfile=keyfile1_path,
+            challenge_response_provider=provider,
+        )
+        db2.set_credentials(password="password", keyfile_data=keyfile2_data)
+        db2.save(db_path)
+
+        # Should open with new keyfile and same device
+        db3 = Database.open(
+            db_path,
+            password="password",
+            keyfile=keyfile2_path,
+            challenge_response_provider=provider,
+        )
+        assert db3.kek_mode
+        assert db3.enrolled_device_count == 1
+
+        entries = db3.find_entries(title="Secret")
+        assert len(entries) == 1
+        assert entries[0].password == "secret_value"
+
+    def test_remove_keyfile_preserves_enrollment(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that removing keyfile doesn't require re-enrollment."""
+        from pathlib import Path
+
+        from kdbxtool.security.keyfile import create_keyfile_bytes
+
+        keyfile_data = create_keyfile_bytes()
+
+        # Write keyfile to disk
+        keyfile_path = Path(str(tmp_path)) / "keyfile.key"
+        keyfile_path.write_bytes(keyfile_data)
+
+        db = Database.create(password="password", keyfile=keyfile_path)
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+
+        db.root_group.create_entry(title="Secret", password="secret_value")
+
+        db_path = Path(str(tmp_path)) / "remove_keyfile.kdbx"
+        db.save(db_path)
+
+        # Open and remove keyfile (password only)
+        db2 = Database.open(
+            db_path,
+            password="password",
+            keyfile=keyfile_path,
+            challenge_response_provider=provider,
+        )
+        db2.set_credentials(password="password")
+        db2.save(db_path)
+
+        # Should open with just password and same device
+        db3 = Database.open(db_path, password="password", challenge_response_provider=provider)
+        assert db3.kek_mode
+        assert db3.enrolled_device_count == 1
+
+        entries = db3.find_entries(title="Secret")
+        assert len(entries) == 1
+        assert entries[0].password == "secret_value"
+
+
+class TestDisableKekMode:
+    """Tests for disable_kek_mode() method."""
+
+    def test_disable_kek_mode_basic(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test basic disable_kek_mode functionality."""
+        from pathlib import Path
+
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+
+        db.root_group.create_entry(title="Secret", password="secret_value")
+
+        assert db.kek_mode
+        assert db.enrolled_device_count == 1
+
+        # Disable KEK mode
+        db.disable_kek_mode()
+
+        assert not db.kek_mode
+        assert db.enrolled_device_count == 0
+
+        # Save without device
+        db_path = Path(str(tmp_path)) / "no_kek.kdbx"
+        db.save(db_path)
+
+        # Should open with just password (no device needed)
+        db2 = Database.open(db_path, password="password")
+        assert not db2.kek_mode
+
+        entries = db2.find_entries(title="Secret")
+        assert len(entries) == 1
+        assert entries[0].password == "secret_value"
+
+    def test_disable_kek_mode_requires_credentials(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Test that disable_kek_mode requires password or keyfile."""
+        from pathlib import Path
+
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+
+        db_path = Path(str(tmp_path)) / "test.kdbx"
+        db.save(db_path)
+
+        # Open and clear credentials (simulating edge case)
+        db2 = Database.open(
+            db_path, password="password", challenge_response_provider=provider
+        )
+
+        # Manually clear credentials to test the check
+        db2._password = None
+        db2._keyfile_data = None
+
+        with pytest.raises(DatabaseError, match="password or keyfile"):
+            db2.disable_kek_mode()
+
+    def test_disable_kek_mode_not_in_kek_mode(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Test that disable_kek_mode fails if not in KEK mode."""
+        db = Database.create(password="password")
+        assert not db.kek_mode
+
+        with pytest.raises(DatabaseError, match="not in KEK mode"):
+            db.disable_kek_mode()
+
+    def test_disable_kek_mode_with_multiple_devices(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Test disable_kek_mode removes all devices."""
+        from pathlib import Path
+
+        db = Database.create(password="password")
+
+        provider1 = MockYubiKey.with_secret(b"secret_one_here__20!")
+        provider2 = MockYubiKey.with_secret(b"secret_two_here__20!")
+
+        db.enroll_device(provider1, label="Primary")
+        db.enroll_device(provider2, label="Backup")
+
+        assert db.enrolled_device_count == 2
+
+        db.disable_kek_mode()
+
+        assert not db.kek_mode
+        assert db.enrolled_device_count == 0
+
+        # Save and verify
+        db_path = Path(str(tmp_path)) / "no_devices.kdbx"
+        db.save(db_path)
+
+        db2 = Database.open(db_path, password="password")
+        assert not db2.kek_mode
+        assert db2.enrolled_device_count == 0
+
+    def test_disable_kek_mode_roundtrip_preserves_data(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Test that disable_kek_mode preserves all database content."""
+        from pathlib import Path
+
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+
+        # Add various content
+        db.root_group.create_entry(
+            title="Entry1",
+            username="user1",
+            password="pass1",
+            url="https://example.com",
+        )
+        subgroup = db.root_group.create_subgroup("Subgroup")
+        subgroup.create_entry(title="Entry2", username="user2", password="pass2")
+
+        db_path = Path(str(tmp_path)) / "content_test.kdbx"
+        db.save(db_path)
+
+        # Open with device, disable KEK, save again
+        db2 = Database.open(
+            db_path, password="password", challenge_response_provider=provider
+        )
+        db2.disable_kek_mode()
+        db2.save(db_path)
+
+        # Open without device and verify all content
+        db3 = Database.open(db_path, password="password")
+
+        entries = list(db3.iter_entries())
+        assert len(entries) == 2
+
+        entry1 = db3.find_entries(title="Entry1")
+        assert len(entry1) == 1
+        assert entry1[0].username == "user1"
+        assert entry1[0].password == "pass1"
+
+        entry2 = db3.find_entries(title="Entry2")
+        assert len(entry2) == 1
+        assert entry2[0].username == "user2"
+
+        groups = db3.find_groups(name="Subgroup")
+        assert len(groups) == 1
+
+
+class TestRotateKek:
+    """Tests for rotate_kek() method."""
+
+    def test_rotate_kek_basic(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test basic KEK rotation with single device."""
+        from pathlib import Path
+
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+
+        db.root_group.create_entry(title="Secret", password="secret_value")
+
+        db_path = Path(str(tmp_path)) / "rotate_test.kdbx"
+        db.save(db_path)
+
+        # Open and rotate KEK
+        db2 = Database.open(
+            db_path, password="password", challenge_response_provider=provider
+        )
+
+        db2.rotate_kek({"Primary": provider})
+        db2.save(db_path)
+
+        # Should still work with same device
+        db3 = Database.open(
+            db_path, password="password", challenge_response_provider=provider
+        )
+        assert db3.kek_mode
+        assert db3.enrolled_device_count == 1
+
+        entries = db3.find_entries(title="Secret")
+        assert len(entries) == 1
+        assert entries[0].password == "secret_value"
+
+    def test_rotate_kek_invalidates_old_device(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Test that KEK rotation with different devices invalidates old one."""
+        from pathlib import Path
+
+        db = Database.create(password="password")
+
+        old_provider = MockYubiKey.with_secret(b"old_secret_here__20!")
+        new_provider = MockYubiKey.with_secret(b"new_secret_here__20!")
+
+        db.enroll_device(old_provider, label="Old Device")
+
+        db.root_group.create_entry(title="Secret", password="secret_value")
+
+        db_path = Path(str(tmp_path)) / "rotate_invalidate.kdbx"
+        db.save(db_path)
+
+        # Open with old device and rotate to new device
+        db2 = Database.open(
+            db_path, password="password", challenge_response_provider=old_provider
+        )
+
+        db2.rotate_kek({"New Device": new_provider})
+        db2.save(db_path)
+
+        # Old device should no longer work
+        with pytest.raises(AuthenticationError):
+            Database.open(
+                db_path, password="password", challenge_response_provider=old_provider
+            )
+
+        # New device should work
+        db3 = Database.open(
+            db_path, password="password", challenge_response_provider=new_provider
+        )
+        assert db3.kek_mode
+
+        entries = db3.find_entries(title="Secret")
+        assert len(entries) == 1
+
+    def test_rotate_kek_multiple_devices(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Test KEK rotation with multiple devices."""
+        from pathlib import Path
+
+        db = Database.create(password="password")
+
+        provider1 = MockYubiKey.with_secret(b"secret_one_here__20!")
+        provider2 = MockYubiKey.with_secret(b"secret_two_here__20!")
+        provider3 = MockYubiKey.with_secret(b"secret_three____20!")
+
+        db.enroll_device(provider1, label="Device1")
+        db.enroll_device(provider2, label="Device2")
+
+        db_path = Path(str(tmp_path)) / "multi_rotate.kdbx"
+        db.save(db_path)
+
+        # Open and rotate with devices 2 and 3 (dropping device 1)
+        db2 = Database.open(
+            db_path, password="password", challenge_response_provider=provider1
+        )
+
+        db2.rotate_kek({
+            "Device2": provider2,
+            "Device3": provider3,
+        })
+        db2.save(db_path)
+
+        # Device 1 should no longer work
+        with pytest.raises(AuthenticationError):
+            Database.open(
+                db_path, password="password", challenge_response_provider=provider1
+            )
+
+        # Devices 2 and 3 should work
+        db3 = Database.open(
+            db_path, password="password", challenge_response_provider=provider2
+        )
+        assert db3.enrolled_device_count == 2
+
+        db4 = Database.open(
+            db_path, password="password", challenge_response_provider=provider3
+        )
+        assert db4.enrolled_device_count == 2
+
+    def test_rotate_kek_not_in_kek_mode(self) -> None:
+        """Test that rotate_kek fails if not in KEK mode."""
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+
+        with pytest.raises(DatabaseError, match="not in KEK mode"):
+            db.rotate_kek({"Device": provider})
+
+    def test_rotate_kek_empty_providers(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Test that rotate_kek fails with empty providers dict."""
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+
+        with pytest.raises(ValueError, match="At least one provider"):
+            db.rotate_kek({})
+
+    def test_rotate_kek_after_revoke(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test KEK rotation after revoking a device."""
+        from pathlib import Path
+
+        db = Database.create(password="password")
+
+        compromised = MockYubiKey.with_secret(b"compromised_key__20!")
+        backup = MockYubiKey.with_secret(b"backup_key_here__20!")
+
+        db.enroll_device(compromised, label="Compromised")
+        db.enroll_device(backup, label="Backup")
+
+        db.root_group.create_entry(title="Secret", password="secret_value")
+
+        db_path = Path(str(tmp_path)) / "revoke_rotate.kdbx"
+        db.save(db_path)
+
+        # Simulate: device compromised, revoke and rotate
+        db2 = Database.open(
+            db_path, password="password", challenge_response_provider=backup
+        )
+
+        db2.revoke_device("Compromised")
+        db2.rotate_kek({"Backup": backup})
+        db2.save(db_path)
+
+        # Compromised device cannot open (even if attacker has old backup)
+        with pytest.raises(AuthenticationError):
+            Database.open(
+                db_path, password="password", challenge_response_provider=compromised
+            )
+
+        # Backup still works
+        db3 = Database.open(
+            db_path, password="password", challenge_response_provider=backup
+        )
+        assert db3.enrolled_device_count == 1
+
+        entries = db3.find_entries(title="Secret")
+        assert len(entries) == 1
+        assert entries[0].password == "secret_value"
+
+    def test_rotate_kek_preserves_data(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that KEK rotation preserves all database content."""
+        from pathlib import Path
+
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary")
+
+        # Add various content
+        db.root_group.create_entry(
+            title="Entry1",
+            username="user1",
+            password="pass1",
+            url="https://example.com",
+        )
+        subgroup = db.root_group.create_subgroup("Subgroup")
+        subgroup.create_entry(title="Entry2", username="user2", password="pass2")
+
+        db_path = Path(str(tmp_path)) / "content_test.kdbx"
+        db.save(db_path)
+
+        # Open and rotate KEK
+        db2 = Database.open(
+            db_path, password="password", challenge_response_provider=provider
+        )
+        db2.rotate_kek({"Primary": provider})
+        db2.save(db_path)
+
+        # Verify all content preserved
+        db3 = Database.open(
+            db_path, password="password", challenge_response_provider=provider
+        )
+
+        entries = list(db3.iter_entries())
+        assert len(entries) == 2
+
+        entry1 = db3.find_entries(title="Entry1")
+        assert len(entry1) == 1
+        assert entry1[0].username == "user1"
+        assert entry1[0].password == "pass1"
+
+        groups = db3.find_groups(name="Subgroup")
+        assert len(groups) == 1

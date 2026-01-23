@@ -6,10 +6,12 @@ from kdbxtool.security.kek import (
     CR_DEVICE_PREFIX,
     CR_SALT_KEY,
     CR_VERSION_KEY,
+    HKDF_INFO_KEK_WRAP,
     VERSION_KEK,
     VERSION_LEGACY,
     WRAPPED_KEK_SIZE,
     EnrolledDevice,
+    _hkdf_sha256,
     derive_final_key,
     deserialize_device_entry,
     generate_kek,
@@ -21,6 +23,75 @@ from kdbxtool.security.kek import (
     wrap_kek,
 )
 from kdbxtool.security.memory import SecureBytes
+
+
+class TestHkdfSha256:
+    """Tests for HKDF-SHA256 key derivation with domain separation."""
+
+    def test_deterministic_output(self) -> None:
+        """Test that HKDF produces consistent output for same inputs."""
+        ikm = b"input_keying_material"
+        info = b"domain_info"
+
+        result1 = _hkdf_sha256(ikm, info)
+        result2 = _hkdf_sha256(ikm, info)
+
+        assert result1 == result2
+        assert len(result1) == 32
+
+    def test_different_info_produces_different_keys(self) -> None:
+        """Test that different info values produce different keys (domain separation)."""
+        ikm = b"same_input_keying_material"
+        info1 = b"kdbxtool-kek-wrap-v1"
+        info2 = b"some-other-purpose"
+
+        key1 = _hkdf_sha256(ikm, info1)
+        key2 = _hkdf_sha256(ikm, info2)
+
+        assert key1 != key2
+
+    def test_different_ikm_produces_different_keys(self) -> None:
+        """Test that different IKM produces different keys."""
+        info = b"same_info"
+        ikm1 = b"input1"
+        ikm2 = b"input2"
+
+        key1 = _hkdf_sha256(ikm1, info)
+        key2 = _hkdf_sha256(ikm2, info)
+
+        assert key1 != key2
+
+    def test_custom_length(self) -> None:
+        """Test HKDF with custom output length."""
+        ikm = b"input"
+        info = b"info"
+
+        key16 = _hkdf_sha256(ikm, info, length=16)
+        key32 = _hkdf_sha256(ikm, info, length=32)
+
+        assert len(key16) == 16
+        assert len(key32) == 32
+        # First 16 bytes should match
+        assert key16 == key32[:16]
+
+    def test_length_exceeds_max_raises(self) -> None:
+        """Test that requesting more than 32 bytes raises ValueError."""
+        with pytest.raises(ValueError, match="cannot exceed 32 bytes"):
+            _hkdf_sha256(b"ikm", b"info", length=33)
+
+    def test_salt_affects_output(self) -> None:
+        """Test that different salts produce different keys."""
+        ikm = b"input"
+        info = b"info"
+
+        key1 = _hkdf_sha256(ikm, info, salt=b"salt1" + b"\x00" * 27)
+        key2 = _hkdf_sha256(ikm, info, salt=b"salt2" + b"\x00" * 27)
+
+        assert key1 != key2
+
+    def test_kek_wrap_info_constant(self) -> None:
+        """Test that the KEK wrap info constant is set correctly."""
+        assert HKDF_INFO_KEK_WRAP == b"kdbxtool-kek-wrap-v1"
 
 
 class TestConstants:

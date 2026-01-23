@@ -6,7 +6,8 @@ database. Each enrolled device wraps the same KEK with its unique CR output.
 
 Security model:
 - KEK is a random 32-byte key, generated once per database
-- Each device's CR response is used to derive an AES-256 key via SHA-256
+- Each device's CR response is processed through HKDF-SHA256 with domain
+  separation to derive an AES-256 key (prevents key confusion attacks)
 - The KEK is encrypted with AES-256-GCM for each enrolled device
 - Password/keyfile derive the "base master key" independently
 - Final master key = base_master_key XOR KEK
@@ -20,6 +21,7 @@ This allows:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -31,6 +33,42 @@ from Cryptodome.Cipher import AES
 from .memory import SecureBytes
 
 logger = logging.getLogger(__name__)
+
+# Domain separation info for HKDF key derivation
+# This ensures keys derived for KEK wrapping cannot be confused with keys
+# derived for other purposes, even if the same CR response is used elsewhere
+HKDF_INFO_KEK_WRAP = b"kdbxtool-kek-wrap-v1"
+
+
+def _hkdf_sha256(ikm: bytes, info: bytes, length: int = 32, salt: bytes = b"") -> bytes:
+    """Derive a key using HKDF-SHA256 (RFC 5869).
+
+    This provides domain separation to ensure keys derived for different
+    purposes are cryptographically independent, even from the same input.
+
+    Args:
+        ikm: Input keying material (e.g., CR response)
+        info: Context/application-specific info for domain separation
+        length: Desired output length in bytes (max 32 for single block)
+        salt: Optional salt (defaults to empty, which uses zero-filled salt)
+
+    Returns:
+        Derived key of specified length
+    """
+    if length > 32:
+        raise ValueError("HKDF output length cannot exceed 32 bytes for single block")
+
+    # HKDF-Extract: PRK = HMAC-Hash(salt, IKM)
+    # If salt is empty, use a zero-filled salt of hash length
+    if not salt:
+        salt = b"\x00" * 32
+    prk = hmac.new(salt, ikm, hashlib.sha256).digest()
+
+    # HKDF-Expand: OKM = HMAC-Hash(PRK, info || 0x01)
+    # For 32 bytes output, only one block is needed
+    okm = hmac.new(prk, info + b"\x01", hashlib.sha256).digest()
+
+    return okm[:length]
 
 # CustomData keys for KEK mode storage (strings to match header.public_custom_data)
 CR_VERSION_KEY = "KDBXTOOL_CR_VERSION"
@@ -94,7 +132,9 @@ def generate_salt() -> bytes:
 def wrap_kek(kek: bytes, cr_response: bytes) -> bytes:
     """Encrypt KEK with device's CR response using AES-256-GCM.
 
-    The CR response is hashed with SHA-256 to derive the AES key.
+    The CR response is processed through HKDF-SHA256 with domain separation
+    to derive the AES key. This ensures the derived key is unique to KEK
+    wrapping and cannot be confused with keys derived for other purposes.
     AES-GCM provides authenticated encryption to detect tampering.
 
     Args:
@@ -110,8 +150,9 @@ def wrap_kek(kek: bytes, cr_response: bytes) -> bytes:
     if len(kek) != 32:
         raise ValueError(f"KEK must be 32 bytes, got {len(kek)}")
 
-    # Derive AES key from CR response (use bytearray for zeroization)
-    device_key = bytearray(hashlib.sha256(cr_response).digest())
+    # Derive AES key from CR response using HKDF with domain separation
+    # This prevents key reuse if the same CR response is used elsewhere
+    device_key = bytearray(_hkdf_sha256(cr_response, HKDF_INFO_KEK_WRAP))
 
     try:
         # Encrypt with AES-256-GCM
@@ -129,6 +170,9 @@ def wrap_kek(kek: bytes, cr_response: bytes) -> bytes:
 def unwrap_kek(wrapped: bytes, cr_response: bytes) -> SecureBytes:
     """Decrypt KEK using device's CR response.
 
+    The CR response is processed through HKDF-SHA256 with the same domain
+    separation used in wrap_kek() to derive the AES decryption key.
+
     Args:
         wrapped: 64-byte encrypted KEK from wrap_kek()
         cr_response: Challenge-response output (20 or 32 bytes)
@@ -142,8 +186,8 @@ def unwrap_kek(wrapped: bytes, cr_response: bytes) -> SecureBytes:
     if len(wrapped) != WRAPPED_KEK_SIZE:
         raise ValueError(f"Invalid wrapped KEK length: {len(wrapped)}, expected {WRAPPED_KEK_SIZE}")
 
-    # Derive AES key from CR response (use bytearray for zeroization)
-    device_key = bytearray(hashlib.sha256(cr_response).digest())
+    # Derive AES key from CR response using HKDF with domain separation
+    device_key = bytearray(_hkdf_sha256(cr_response, HKDF_INFO_KEK_WRAP))
 
     try:
         # Parse components (16-byte nonce is PyCryptodome default)

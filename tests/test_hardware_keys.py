@@ -542,7 +542,6 @@ class TestKekModeHardware:
         from pathlib import Path
 
         from kdbxtool import Database, YubiKeyHmacSha1
-        from kdbxtool.exceptions import AuthenticationError
 
         slot, serial = get_test_yubikey_config()
         provider = YubiKeyHmacSha1(slot=slot, serial=serial, on_touch_required=None)

@@ -118,7 +118,7 @@ class Kdbx4Reader:
             password: Optional password
             keyfile_data: Optional keyfile contents
             transformed_key: Optional precomputed transformed key (skips KDF)
-            yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (KeePassXC-compatible mode)
+            yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (compat mode)
             kek: Optional 32-byte Key Encryption Key (KEK mode). If provided,
                 the final master key is XOR'd with KEK after KDF derivation.
 
@@ -411,7 +411,7 @@ class Kdbx4Writer:
             password: Optional password
             keyfile_data: Optional keyfile contents
             transformed_key: Optional precomputed transformed key (skips KDF)
-            yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (KeePassXC-compatible mode)
+            yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (compat mode)
             kek: Optional 32-byte Key Encryption Key (KEK mode)
 
         Returns:
@@ -600,7 +600,7 @@ def read_kdbx4(
         password: Optional password
         keyfile_data: Optional keyfile contents
         transformed_key: Optional precomputed transformed key (skips KDF)
-        yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (KeePassXC-compatible mode)
+        yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (compat mode)
         kek: Optional 32-byte Key Encryption Key (KEK mode)
 
     Returns:
@@ -635,7 +635,7 @@ def write_kdbx4(
         password: Optional password
         keyfile_data: Optional keyfile contents
         transformed_key: Optional precomputed transformed key (skips KDF)
-        yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (KeePassXC-compatible mode)
+        yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (compat mode)
         kek: Optional 32-byte Key Encryption Key (KEK mode)
 
     Returns:

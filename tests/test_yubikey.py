@@ -65,7 +65,7 @@ class TestHmacSha1ResponseSize:
 
 
 class TestDeriveCompositeKeyWithYubiKey:
-    """Tests for derive_composite_key with YubiKey HMAC-SHA1 response (KeePassXC-compatible mode)."""
+    """Tests for derive_composite_key with YubiKey HMAC-SHA1 response (compat mode)."""
 
     def test_yubikey_response_only(self) -> None:
         """Test composite key from YubiKey HMAC-SHA1 response only."""

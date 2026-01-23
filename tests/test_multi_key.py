@@ -364,7 +364,7 @@ class TestKekModeEnrollment:
 
         from kdbxtool.exceptions import DatabaseError
 
-        # Create database with KeePassXC-compatible mode (using challenge_response_provider directly)
+        # Create database with compat mode (using challenge_response_provider directly)
         db = Database.create(password="password")
         compat_provider = MockYubiKey.with_test_secret()
         db_path = Path(str(tmp_path)) / "compat.kdbx"

@@ -127,7 +127,7 @@ __all__ = [
     "YUBIKEY_HARDWARE_AVAILABLE",
     "FIDO2_AVAILABLE",
     "list_fido2_devices",
-    # YubiKey support (legacy)
+    # YubiKey utilities
     "YubiKeyConfig",
     "check_slot_configured",
     "list_yubikeys",

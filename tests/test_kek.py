@@ -502,6 +502,159 @@ class TestSerializeDeserialize:
         with pytest.raises(ValueError, match=r"Invalid wrapped_kek size: \d+, expected 64"):
             deserialize_device_entry(valid_json + b"\x00" + b"too_short")
 
+    # H6: Tests for missing JSON fields
+    def test_deserialize_missing_type_field_fails(self) -> None:
+        """Test that deserialize fails when 'type' field is missing."""
+        # JSON without 'type' field
+        json_data = b'{"label":"Test","id":"123"}'
+        with pytest.raises(KeyError):
+            deserialize_device_entry(json_data + b"\x00" + b"w" * 64)
+
+    def test_deserialize_missing_label_field_fails(self) -> None:
+        """Test that deserialize fails when 'label' field is missing."""
+        # JSON without 'label' field
+        json_data = b'{"type":"test","id":"123"}'
+        with pytest.raises(KeyError):
+            deserialize_device_entry(json_data + b"\x00" + b"w" * 64)
+
+    def test_deserialize_missing_id_field_fails(self) -> None:
+        """Test that deserialize fails when 'id' field is missing."""
+        # JSON without 'id' field
+        json_data = b'{"type":"test","label":"Test"}'
+        with pytest.raises(KeyError):
+            deserialize_device_entry(json_data + b"\x00" + b"w" * 64)
+
+    def test_deserialize_all_fields_missing_fails(self) -> None:
+        """Test that deserialize fails when all required fields are missing."""
+        # JSON with only extra metadata, no required fields
+        json_data = b'{"extra":"data","version":1}'
+        with pytest.raises(KeyError):
+            deserialize_device_entry(json_data + b"\x00" + b"w" * 64)
+
+    # H7: Tests for Unicode/binary edge cases
+    def test_unicode_label_roundtrip(self) -> None:
+        """Test serialize/deserialize with Unicode label."""
+        device = EnrolledDevice(
+            device_type="yubikey_hmac",
+            label="YubiKey \u00e9\u00e8\u00ea \u4e2d\u6587 \U0001f511",  # accents, Chinese, emoji
+            device_id="test123",
+            wrapped_kek=b"w" * 64,
+        )
+
+        serialized = serialize_device_entry(device)
+        restored = deserialize_device_entry(serialized)
+
+        assert restored.label == device.label
+
+    def test_unicode_device_type_roundtrip(self) -> None:
+        """Test serialize/deserialize with Unicode device_type."""
+        device = EnrolledDevice(
+            device_type="yubikey_\u00fc\u00f6\u00e4",  # German umlauts
+            label="Test",
+            device_id="test123",
+            wrapped_kek=b"w" * 64,
+        )
+
+        serialized = serialize_device_entry(device)
+        restored = deserialize_device_entry(serialized)
+
+        assert restored.device_type == device.device_type
+
+    def test_unicode_device_id_roundtrip(self) -> None:
+        """Test serialize/deserialize with Unicode device_id."""
+        device = EnrolledDevice(
+            device_type="test",
+            label="Test",
+            device_id="id_\u0410\u0411\u0412\u0413",  # Cyrillic letters
+            wrapped_kek=b"w" * 64,
+        )
+
+        serialized = serialize_device_entry(device)
+        restored = deserialize_device_entry(serialized)
+
+        assert restored.device_id == device.device_id
+
+    def test_special_json_characters_roundtrip(self) -> None:
+        """Test serialize/deserialize with JSON special characters."""
+        device = EnrolledDevice(
+            device_type="test",
+            label='Label with "quotes" and \\backslash',
+            device_id="id/with/slashes",
+            metadata={"path": "C:\\Users\\test", "nested": {"key": "value"}},
+            wrapped_kek=b"w" * 64,
+        )
+
+        serialized = serialize_device_entry(device)
+        restored = deserialize_device_entry(serialized)
+
+        assert restored.label == device.label
+        assert restored.device_id == device.device_id
+        assert restored.metadata == device.metadata
+
+    def test_newlines_and_tabs_roundtrip(self) -> None:
+        """Test serialize/deserialize with newlines and tabs."""
+        device = EnrolledDevice(
+            device_type="test",
+            label="Label\nwith\nnewlines",
+            device_id="id\twith\ttabs",
+            wrapped_kek=b"w" * 64,
+        )
+
+        serialized = serialize_device_entry(device)
+        restored = deserialize_device_entry(serialized)
+
+        assert restored.label == device.label
+        assert restored.device_id == device.device_id
+
+    def test_null_byte_in_label_roundtrip(self) -> None:
+        """Test that null bytes in label work correctly.
+
+        JSON encoding escapes null bytes as \\u0000, so they don't interfere
+        with the null byte separator between JSON and wrapped_kek.
+        """
+        device = EnrolledDevice(
+            device_type="test",
+            label="Label\x00Fake",  # Null byte in label
+            device_id="test123",
+            wrapped_kek=b"w" * 64,
+        )
+
+        serialized = serialize_device_entry(device)
+        restored = deserialize_device_entry(serialized)
+
+        assert restored.label == device.label
+        assert "\x00" in restored.label
+
+    def test_very_long_label(self) -> None:
+        """Test serialize/deserialize with very long label."""
+        device = EnrolledDevice(
+            device_type="test",
+            label="A" * 10000,  # 10KB label
+            device_id="test123",
+            wrapped_kek=b"w" * 64,
+        )
+
+        serialized = serialize_device_entry(device)
+        restored = deserialize_device_entry(serialized)
+
+        assert restored.label == device.label
+        assert len(restored.label) == 10000
+
+    def test_empty_metadata_preserves_structure(self) -> None:
+        """Test that empty metadata doesn't add extra fields to JSON."""
+        device = EnrolledDevice(
+            device_type="test",
+            label="Test",
+            device_id="id123",
+            metadata={},
+            wrapped_kek=b"w" * 64,
+        )
+
+        serialized = serialize_device_entry(device)
+        restored = deserialize_device_entry(serialized)
+
+        assert restored.metadata == {}
+
 
 class TestDeviceKeyNames:
     """Tests for device key name functions."""

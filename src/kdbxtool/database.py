@@ -769,52 +769,67 @@ class Database:
         new_salt = generate_salt()
         new_kek = generate_kek()
 
-        # Remove all existing device entries
-        device_keys = [
-            key for key in self._header.public_custom_data if key.startswith(CR_DEVICE_PREFIX)
-        ]
-        for key in device_keys:
-            del self._header.public_custom_data[key]
+        try:
+            # Build new device entries in temporary structure
+            # This ensures atomicity - we only commit changes after ALL devices succeed
+            new_device_entries: list[tuple[str, bytes]] = []
 
-        # Re-enroll each provided device with new KEK
-        for index, (label, provider) in enumerate(providers.items()):
-            # Get CR response with new salt
-            response = provider.challenge_response(new_salt)
+            for index, (label, provider) in enumerate(providers.items()):
+                # Get CR response with new salt - this can fail (device not present, etc.)
+                response = provider.challenge_response(new_salt)
 
-            # Wrap new KEK
-            wrapped = wrap_kek(new_kek.data, response.data)
+                # Wrap new KEK
+                wrapped = wrap_kek(new_kek.data, response.data)
 
-            # Detect device type
-            device_type = type(provider).__name__.lower()
-            if "yubikey" in device_type and "fido" not in device_type:
-                device_type = "yubikey_hmac"
-            elif "fido" in device_type:
-                device_type = "fido2"
+                # Detect device type
+                device_type = type(provider).__name__.lower()
+                if "yubikey" in device_type and "fido" not in device_type:
+                    device_type = "yubikey_hmac"
+                elif "fido" in device_type:
+                    device_type = "fido2"
 
-            device = EnrolledDevice(
-                device_type=device_type,
-                label=label,
-                device_id="default",
-                metadata={},
-                wrapped_kek=wrapped,
+                device = EnrolledDevice(
+                    device_type=device_type,
+                    label=label,
+                    device_id="default",
+                    metadata={},
+                    wrapped_kek=wrapped,
+                )
+
+                device_key = get_device_key_name(index)
+                new_device_entries.append((device_key, serialize_device_entry(device)))
+
+            # All devices enrolled successfully - now commit changes atomically
+            # Remove all existing device entries
+            device_keys = [
+                key for key in self._header.public_custom_data if key.startswith(CR_DEVICE_PREFIX)
+            ]
+            for key in device_keys:
+                del self._header.public_custom_data[key]
+
+            # Add new device entries
+            for device_key, serialized in new_device_entries:
+                self._header.public_custom_data[device_key] = serialized
+
+            # Update salt and KEK
+            self._header.public_custom_data[CR_SALT_KEY] = new_salt
+            self._cr_salt = new_salt
+
+            # Zeroize old KEK and set new one
+            old_kek = self._kek
+            self._kek = new_kek
+            new_kek = None  # Prevent zeroization in finally block
+            if old_kek is not None:
+                old_kek.zeroize()
+
+            logger.info(
+                "Rotated KEK with %d devices. Old backups not decryptable by revoked devices.",
+                len(providers),
             )
-
-            device_key = get_device_key_name(index)
-            self._header.public_custom_data[device_key] = serialize_device_entry(device)
-
-        # Update salt and KEK
-        self._header.public_custom_data[CR_SALT_KEY] = new_salt
-        self._cr_salt = new_salt
-
-        # Zeroize old KEK and set new one
-        if self._kek is not None:
-            self._kek.zeroize()
-        self._kek = new_kek
-
-        logger.info(
-            "Rotated KEK with %d devices. Old backups no longer decryptable by revoked devices.",
-            len(providers),
-        )
+        finally:
+            # Zeroize new_kek if we failed before committing
+            if new_kek is not None:
+                new_kek.zeroize()
 
     # --- Opening databases ---
 

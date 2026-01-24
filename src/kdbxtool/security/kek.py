@@ -58,17 +58,27 @@ def _hkdf_sha256(ikm: bytes, info: bytes, length: int = 32, salt: bytes = b"") -
     if length > 32:
         raise ValueError("HKDF output length cannot exceed 32 bytes for single block")
 
-    # HKDF-Extract: PRK = HMAC-Hash(salt, IKM)
-    # If salt is empty, use a zero-filled salt of hash length
-    if not salt:
-        salt = b"\x00" * 32
-    prk = hmac.new(salt, ikm, hashlib.sha256).digest()
+    # Use bytearrays for intermediate values so they can be zeroized
+    prk = bytearray(32)
+    okm = bytearray(32)
 
-    # HKDF-Expand: OKM = HMAC-Hash(PRK, info || 0x01)
-    # For 32 bytes output, only one block is needed
-    okm = hmac.new(prk, info + b"\x01", hashlib.sha256).digest()
+    try:
+        # HKDF-Extract: PRK = HMAC-Hash(salt, IKM)
+        # If salt is empty, use a zero-filled salt of hash length
+        if not salt:
+            salt = b"\x00" * 32
+        prk[:] = hmac.new(salt, ikm, hashlib.sha256).digest()
 
-    return okm[:length]
+        # HKDF-Expand: OKM = HMAC-Hash(PRK, info || 0x01)
+        # For 32 bytes output, only one block is needed
+        okm[:] = hmac.new(bytes(prk), info + b"\x01", hashlib.sha256).digest()
+
+        return bytes(okm[:length])
+    finally:
+        # Zeroize intermediate values
+        for i in range(32):
+            prk[i] = 0
+            okm[i] = 0
 
 
 # CustomData keys for KEK mode storage (strings to match header.public_custom_data)

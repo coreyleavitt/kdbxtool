@@ -172,45 +172,50 @@ class Kdbx4Reader:
             logger.debug("Applying KEK to master key")
             master_key_bytes = derive_final_key(master_key_bytes, kek).data
 
-        # Derive keys for HMAC and encryption
+        # Derive keys for HMAC and encryption (returns SecureBytes)
         hmac_key, cipher_key = self._derive_keys(master_key_bytes, header.master_seed)
 
-        # Verify header HMAC
-        block_key = self._compute_block_hmac_key(hmac_key, 0xFFFFFFFFFFFFFFFF)
-        computed_hmac = compute_hmac_sha256(block_key, header.raw_header)
-        if not constant_time_compare(computed_hmac, header_hmac):
-            raise AuthenticationError()
-        logger.debug("Header HMAC verified")
+        try:
+            # Verify header HMAC
+            block_key = self._compute_block_hmac_key(hmac_key.data, 0xFFFFFFFFFFFFFFFF)
+            computed_hmac = compute_hmac_sha256(block_key, header.raw_header)
+            if not constant_time_compare(computed_hmac, header_hmac):
+                raise AuthenticationError()
+            logger.debug("Header HMAC verified")
 
-        # Read and verify HMAC block stream
-        encrypted_payload = self._read_hmac_block_stream(hmac_key)
+            # Read and verify HMAC block stream
+            encrypted_payload = self._read_hmac_block_stream(hmac_key.data)
 
-        # Decrypt payload
-        ctx = CipherContext(header.cipher, cipher_key, header.encryption_iv)
-        decrypted = ctx.decrypt(encrypted_payload)
+            # Decrypt payload
+            ctx = CipherContext(header.cipher, cipher_key.data, header.encryption_iv)
+            decrypted = ctx.decrypt(encrypted_payload)
 
-        # Remove PKCS7 padding for AES-CBC
-        if header.cipher.iv_size == 16:  # AES-CBC
-            decrypted = self._remove_pkcs7_padding(decrypted)
+            # Remove PKCS7 padding for AES-CBC
+            if header.cipher.iv_size == 16:  # AES-CBC
+                decrypted = self._remove_pkcs7_padding(decrypted)
 
-        # Decompress if needed
-        if header.compression == CompressionType.GZIP:
-            decrypted = gzip.decompress(decrypted)
+            # Decompress if needed
+            if header.compression == CompressionType.GZIP:
+                decrypted = gzip.decompress(decrypted)
 
-        logger.debug("Payload decrypted, %d bytes", len(decrypted))
+            logger.debug("Payload decrypted, %d bytes", len(decrypted))
 
-        # Parse inner header
-        inner_header, xml_start = self._parse_inner_header(decrypted)
+            # Parse inner header
+            inner_header, xml_start = self._parse_inner_header(decrypted)
 
-        # Extract XML
-        xml_data = decrypted[xml_start:]
+            # Extract XML
+            xml_data = decrypted[xml_start:]
 
-        return DecryptedPayload(
-            header=header,
-            inner_header=inner_header,
-            xml_data=xml_data,
-            transformed_key=master_key_bytes,
-        )
+            return DecryptedPayload(
+                header=header,
+                inner_header=inner_header,
+                xml_data=xml_data,
+                transformed_key=master_key_bytes,
+            )
+        finally:
+            # Zeroize derived keys after use
+            hmac_key.zeroize()
+            cipher_key.zeroize()
 
     def _derive_master_key(self, header: KdbxHeader, composite_key: SecureBytes) -> SecureBytes:
         """Derive master key using the KDF specified in header."""
@@ -252,15 +257,19 @@ class Kdbx4Reader:
         else:
             raise KdfError(f"Unsupported KDF: {header.kdf_type}")
 
-    def _derive_keys(self, transformed_key: bytes, master_seed: bytes) -> tuple[bytes, bytes]:
+    def _derive_keys(
+        self, transformed_key: bytes, master_seed: bytes
+    ) -> tuple[SecureBytes, SecureBytes]:
         """Derive HMAC key and cipher key from transformed key.
 
         KDBX4 key derivation:
         - cipher_key = SHA256(master_seed || transformed_key)
         - hmac_key = SHA512(master_seed || transformed_key || 0x01)
+
+        Returns SecureBytes to enable memory zeroization after use.
         """
-        cipher_key = hashlib.sha256(master_seed + transformed_key).digest()
-        hmac_key = hashlib.sha512(master_seed + transformed_key + b"\x01").digest()
+        cipher_key = SecureBytes(hashlib.sha256(master_seed + transformed_key).digest())
+        hmac_key = SecureBytes(hashlib.sha512(master_seed + transformed_key + b"\x01").digest())
 
         return hmac_key, cipher_key
 
@@ -443,40 +452,45 @@ class Kdbx4Writer:
             logger.debug("Applying KEK to master key")
             master_key_bytes = derive_final_key(master_key_bytes, kek).data
 
-        # Derive keys for HMAC and encryption
+        # Derive keys for HMAC and encryption (returns SecureBytes)
         hmac_key, cipher_key = self._derive_keys(master_key_bytes, header.master_seed)
 
-        # Build inner header
-        inner_header_bytes = self._build_inner_header(inner_header)
+        try:
+            # Build inner header
+            inner_header_bytes = self._build_inner_header(inner_header)
 
-        # Combine inner header and XML
-        payload = inner_header_bytes + xml_data
+            # Combine inner header and XML
+            payload = inner_header_bytes + xml_data
 
-        # Compress if needed
-        if header.compression == CompressionType.GZIP:
-            payload = gzip.compress(payload, compresslevel=6)
+            # Compress if needed
+            if header.compression == CompressionType.GZIP:
+                payload = gzip.compress(payload, compresslevel=6)
 
-        # Add PKCS7 padding for AES-CBC
-        if header.cipher.iv_size == 16:  # AES-CBC
-            payload = self._add_pkcs7_padding(payload)
+            # Add PKCS7 padding for AES-CBC
+            if header.cipher.iv_size == 16:  # AES-CBC
+                payload = self._add_pkcs7_padding(payload)
 
-        # Encrypt payload
-        ctx = CipherContext(header.cipher, cipher_key, header.encryption_iv)
-        encrypted_payload = ctx.encrypt(payload)
+            # Encrypt payload
+            ctx = CipherContext(header.cipher, cipher_key.data, header.encryption_iv)
+            encrypted_payload = ctx.encrypt(payload)
 
-        # Build HMAC block stream
-        hmac_blocks = self._build_hmac_block_stream(encrypted_payload, hmac_key)
+            # Build HMAC block stream
+            hmac_blocks = self._build_hmac_block_stream(encrypted_payload, hmac_key.data)
 
-        # Build outer header
-        header_bytes = header.to_bytes()
+            # Build outer header
+            header_bytes = header.to_bytes()
 
-        # Compute header hash and HMAC
-        header_hash = hashlib.sha256(header_bytes).digest()
-        block_key = self._compute_block_hmac_key(hmac_key, 0xFFFFFFFFFFFFFFFF)
-        header_hmac = compute_hmac_sha256(block_key, header_bytes)
+            # Compute header hash and HMAC
+            header_hash = hashlib.sha256(header_bytes).digest()
+            block_key = self._compute_block_hmac_key(hmac_key.data, 0xFFFFFFFFFFFFFFFF)
+            header_hmac = compute_hmac_sha256(block_key, header_bytes)
 
-        # Assemble final file
-        return header_bytes + header_hash + header_hmac + hmac_blocks
+            # Assemble final file
+            return header_bytes + header_hash + header_hmac + hmac_blocks
+        finally:
+            # Zeroize derived keys after use
+            hmac_key.zeroize()
+            cipher_key.zeroize()
 
     def _derive_master_key(self, header: KdbxHeader, composite_key: SecureBytes) -> SecureBytes:
         """Derive master key using the KDF specified in header."""
@@ -508,10 +522,15 @@ class Kdbx4Writer:
         else:
             raise KdfError(f"Unsupported KDF for writing: {header.kdf_type}")
 
-    def _derive_keys(self, transformed_key: bytes, master_seed: bytes) -> tuple[bytes, bytes]:
-        """Derive HMAC key and cipher key from transformed key."""
-        cipher_key = hashlib.sha256(master_seed + transformed_key).digest()
-        hmac_key = hashlib.sha512(master_seed + transformed_key + b"\x01").digest()
+    def _derive_keys(
+        self, transformed_key: bytes, master_seed: bytes
+    ) -> tuple[SecureBytes, SecureBytes]:
+        """Derive HMAC key and cipher key from transformed key.
+
+        Returns SecureBytes to enable memory zeroization after use.
+        """
+        cipher_key = SecureBytes(hashlib.sha256(master_seed + transformed_key).digest())
+        hmac_key = SecureBytes(hashlib.sha512(master_seed + transformed_key + b"\x01").digest())
         return hmac_key, cipher_key
 
     def _compute_block_hmac_key(self, hmac_key: bytes, block_index: int) -> bytes:

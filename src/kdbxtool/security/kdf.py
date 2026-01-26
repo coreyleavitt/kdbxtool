@@ -416,69 +416,85 @@ def derive_key_aes_kdf(
 def derive_composite_key(
     password: str | None = None,
     keyfile_data: bytes | None = None,
-    yubikey_response: bytes | None = None,
+    yubikey_hmac_response: bytes | None = None,
 ) -> SecureBytes:
-    """Create composite key from password, keyfile, and/or YubiKey response.
+    """Create composite key from password and/or keyfile.
 
-    The composite key is SHA-256(password_hash || keyfile_key || challenge_result).
+    The composite key is SHA-256(password_hash || keyfile_key [|| challenge_result]).
 
-    KeePassXC-compatible YubiKey handling:
-    - The YubiKey response (20 bytes HMAC-SHA1) is SHA-256 hashed
-    - This hash is appended to the other key components before final SHA-256
-    - The challenge used to obtain the response should be the KDF salt
+    **KEK Mode (default):**
+    Pass yubikey_hmac_response=None. The device challenge-response output is used
+    separately to unwrap the KEK, which is then combined with the base master
+    key via derive_final_key() AFTER KDF. This is the recommended mode for all
+    new databases and supports multiple enrolled devices.
+
+    **KeePassXC-Compatible Mode:**
+    Pass a 20-byte YubiKey HMAC-SHA1 response to mix it directly into the
+    composite key. This provides KeePassXC/KeePassDX compatibility but only
+    supports a single device. NOTE: Only YubiKey HMAC-SHA1 (20 bytes) is
+    supported in this mode. FIDO2, Trezor, and other providers MUST use KEK mode.
 
     The keyfile_key is processed according to KeePass keyfile format rules.
 
     Args:
         password: Optional password string
         keyfile_data: Optional keyfile contents
-        yubikey_response: Optional 20-byte YubiKey HMAC-SHA1 response
+        yubikey_hmac_response: Optional YubiKey HMAC-SHA1 response (20 bytes)
+            for KeePassXC-compatible mode ONLY. For KEK mode, pass None.
+            NOTE: FIDO2 responses (32 bytes) are NOT accepted here - FIDO2
+            must use KEK mode.
 
     Returns:
         32-byte composite key wrapped in SecureBytes
 
     Raises:
         MissingCredentialsError: If no credentials are provided
-        ValueError: If yubikey_response is provided but wrong size
+        ValueError: If yubikey_hmac_response is provided but not 20 bytes
     """
-    if password is None and keyfile_data is None and yubikey_response is None:
+    if password is None and keyfile_data is None and yubikey_hmac_response is None:
         raise MissingCredentialsError()
 
-    if yubikey_response is not None and len(yubikey_response) != 20:
+    # KeePassXC-compatible mode: only accept 20-byte YubiKey HMAC-SHA1 responses
+    # FIDO2 and other providers must use KEK mode
+    if yubikey_hmac_response is not None and len(yubikey_hmac_response) != 20:
         raise ValueError(
-            f"YubiKey response must be 20 bytes (HMAC-SHA1), got {len(yubikey_response)}"
+            "KeePassXC-compatible mode only supports YubiKey HMAC-SHA1 (20 bytes). "
+            f"Got {len(yubikey_hmac_response)} bytes. "
+            "FIDO2 and other providers must use KEK mode."
         )
 
     logger.debug(
-        "Deriving composite key (password=%s, keyfile=%s, yubikey=%s)",
+        "Deriving composite key (password=%s, keyfile=%s, compat_cr=%s)",
         password is not None,
         keyfile_data is not None,
-        yubikey_response is not None,
+        yubikey_hmac_response is not None,
     )
 
-    parts: list[bytes] = []
-    secure_parts: list[SecureBytes] = []
+    # Use bytearrays for all intermediates so they can be zeroized
+    parts: list[bytearray] = []
+    composite = bytearray(32)
 
     try:
         if password is not None:
-            # Wrap password hash in SecureBytes for proper zeroization
-            pwd_hash = SecureBytes(hashlib.sha256(password.encode("utf-8")).digest())
-            secure_parts.append(pwd_hash)
-            parts.append(pwd_hash.data)
+            pwd_hash = bytearray(hashlib.sha256(password.encode("utf-8")).digest())
+            parts.append(pwd_hash)
 
         if keyfile_data is not None:
-            key_bytes = parse_keyfile(keyfile_data)
+            key_bytes = bytearray(parse_keyfile(keyfile_data))
             parts.append(key_bytes)
 
-        if yubikey_response is not None:
-            # KeePassXC: challenge() returns SHA256 of all CR keys' rawKey
-            # rawKey for ChallengeResponseKey is the raw YubiKey response
-            challenge_result = hashlib.sha256(yubikey_response).digest()
+        if yubikey_hmac_response is not None:
+            # KeePassXC-compatible mode: mix YubiKey HMAC-SHA1 response directly
+            # KeePassXC: challenge() returns SHA256 of CR key's rawKey
+            challenge_result = bytearray(hashlib.sha256(yubikey_hmac_response).digest())
             parts.append(challenge_result)
 
-        composite = hashlib.sha256(b"".join(parts)).digest()
-        return SecureBytes(composite)
+        composite[:] = hashlib.sha256(b"".join(parts)).digest()
+        return SecureBytes(bytes(composite))
     finally:
-        # Zeroize intermediate values
-        for sp in secure_parts:
-            sp.zeroize()
+        # Zeroize all intermediate values
+        for part in parts:
+            for i in range(len(part)):
+                part[i] = 0
+        for i in range(len(composite)):
+            composite[i] = 0

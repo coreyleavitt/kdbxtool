@@ -2,7 +2,7 @@
 
 import pytest
 
-from kdbxtool import Database, Entry, HistoryEntry
+from kdbxtool import Database, Entry
 
 
 class TestDeleteHistory:

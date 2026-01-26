@@ -516,6 +516,14 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "fido2" },
+    { name = "oxifish" },
+    { name = "yubikey-manager" },
+]
+fido2 = [
+    { name = "fido2" },
+]
 twofish = [
     { name = "oxifish" },
 ]
@@ -543,11 +551,15 @@ docs = [
 requires-dist = [
     { name = "argon2-cffi", specifier = ">=23.1.0" },
     { name = "defusedxml", specifier = ">=0.7.0" },
+    { name = "fido2", marker = "extra == 'all'", specifier = ">=1.1" },
+    { name = "fido2", marker = "extra == 'fido2'", specifier = ">=1.1" },
+    { name = "oxifish", marker = "extra == 'all'", specifier = ">=0.1.1" },
     { name = "oxifish", marker = "extra == 'twofish'", specifier = ">=0.1.1" },
     { name = "pycryptodomex", specifier = ">=3.20.0" },
+    { name = "yubikey-manager", marker = "extra == 'all'", specifier = ">=5.0.0" },
     { name = "yubikey-manager", marker = "extra == 'yubikey'", specifier = ">=5.0.0" },
 ]
-provides-extras = ["twofish", "yubikey"]
+provides-extras = ["twofish", "yubikey", "fido2", "all"]
 
 [package.metadata.requires-dev]
 dev = [

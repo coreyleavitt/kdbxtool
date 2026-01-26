@@ -19,11 +19,17 @@ Exception Hierarchy:
     │   ├── InvalidPasswordError
     │   ├── InvalidKeyFileError
     │   ├── MissingCredentialsError
-    │   └── YubiKeyError
-    │       ├── YubiKeyNotFoundError
-    │       ├── YubiKeySlotError
-    │       ├── YubiKeyTimeoutError
-    │       └── YubiKeyNotAvailableError
+    │   └── ChallengeResponseError
+    │       ├── YubiKeyError
+    │       │   ├── YubiKeyNotFoundError
+    │       │   ├── YubiKeySlotError
+    │       │   ├── YubiKeyTimeoutError
+    │       │   └── YubiKeyNotAvailableError
+    │       └── Fido2Error
+    │           ├── Fido2NotAvailableError
+    │           ├── Fido2DeviceNotFoundError
+    │           ├── Fido2CredentialNotFoundError
+    │           └── Fido2PinRequiredError
     └── DatabaseError
         ├── EntryNotFoundError
         └── GroupNotFoundError
@@ -197,10 +203,21 @@ class MissingCredentialsError(CredentialError):
         super().__init__("At least one credential (password or keyfile) is required")
 
 
+# --- Challenge-Response Errors ---
+
+
+class ChallengeResponseError(CredentialError):
+    """Base class for challenge-response authentication errors.
+
+    This includes hardware security keys like YubiKey (HMAC-SHA1)
+    and FIDO2 devices (hmac-secret extension).
+    """
+
+
 # --- YubiKey Errors ---
 
 
-class YubiKeyError(CredentialError):
+class YubiKeyError(ChallengeResponseError):
     """Error communicating with YubiKey.
 
     Base class for YubiKey-related errors. These occur during
@@ -238,10 +255,9 @@ class YubiKeyTimeoutError(YubiKeyError):
     was required but not received within the timeout period.
     """
 
-    def __init__(self, timeout_seconds: float = 15.0) -> None:
-        self.timeout_seconds = timeout_seconds
+    def __init__(self) -> None:
         super().__init__(
-            f"YubiKey operation timed out after {timeout_seconds}s. "
+            "YubiKey operation timed out. "
             "Touch may be required - try again and press the YubiKey button."
         )
 
@@ -258,6 +274,63 @@ class YubiKeyNotAvailableError(YubiKeyError):
             "YubiKey support requires the yubikey-manager package. "
             "Install with: pip install kdbxtool[yubikey]"
         )
+
+
+# --- FIDO2 Errors ---
+
+
+class Fido2Error(ChallengeResponseError):
+    """Base class for FIDO2 hmac-secret errors.
+
+    These occur during challenge-response authentication using
+    the FIDO2 hmac-secret extension.
+    """
+
+
+class Fido2NotAvailableError(Fido2Error):
+    """FIDO2 support requested but python-fido2 not installed.
+
+    The python-fido2 package is required for FIDO2 hmac-secret
+    authentication. Install it with: pip install kdbxtool[fido2]
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "FIDO2 support requires the fido2 package. Install with: pip install kdbxtool[fido2]"
+        )
+
+
+class Fido2DeviceNotFoundError(Fido2Error):
+    """No FIDO2 device detected.
+
+    No FIDO2 device with hmac-secret support was found connected
+    to the system. Ensure the device is properly inserted.
+    """
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(message or "No FIDO2 device found. Ensure it is connected.")
+
+
+class Fido2CredentialNotFoundError(Fido2Error):
+    """Credential ID not found on device.
+
+    The specified credential ID does not exist on the FIDO2 device.
+    The credential may have been created on a different device.
+    """
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(message or "Credential not found on FIDO2 device.")
+
+
+class Fido2PinRequiredError(Fido2Error):
+    """Device requires PIN but none provided.
+
+    The FIDO2 device is configured to require a PIN for this
+    operation, but no PIN was provided.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("FIDO2 device requires PIN but none was provided.")
 
 
 # --- Database Errors ---

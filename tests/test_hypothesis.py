@@ -6,11 +6,10 @@ randomized inputs to catch issues that example-based tests might miss.
 
 from datetime import timedelta
 
-from hypothesis import given, settings, assume, HealthCheck
+from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 from kdbxtool import Database
-from kdbxtool.models import Entry, Group
 
 # Hypothesis settings for slow KDF operations
 # Suppress health checks for slow data generation (KDF is intentionally slow)

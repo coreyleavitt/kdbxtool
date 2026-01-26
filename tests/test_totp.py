@@ -1,6 +1,7 @@
 """Tests for TOTP code generation."""
 
 import time
+from datetime import UTC
 
 import pytest
 
@@ -121,11 +122,11 @@ class TestTotpCode:
 
     def test_expires_at(self) -> None:
         """Test expires_at datetime."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         totp_code = TotpCode(code="123456", period=30, generated_at=0.0)
         # Generated at t=0, period=30, should expire at t=30
-        expected = datetime.fromtimestamp(30, tz=timezone.utc)
+        expected = datetime.fromtimestamp(30, tz=UTC)
         assert totp_code.expires_at == expected
 
     def test_is_expired_false_when_fresh(self) -> None:
@@ -257,13 +258,13 @@ class TestEntryTotp:
 
     def test_totp_with_datetime(self) -> None:
         """Test TOTP with datetime timestamp."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         db = Database.create(password="test")
         entry = db.root_group.create_entry(title="Test")
         entry.otp = "otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP"
 
-        dt = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
         result = entry.totp(at=dt)
         assert result is not None
 

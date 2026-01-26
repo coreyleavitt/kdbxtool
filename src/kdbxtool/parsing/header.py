@@ -135,6 +135,9 @@ class KdbxHeader:
     # Raw header bytes for HMAC verification
     raw_header: bytes = field(default=b"", repr=False)
 
+    # KDBX4 public custom data (unencrypted, for challenge-response device info)
+    public_custom_data: dict[str, bytes] = field(default_factory=dict)
+
     @classmethod
     def parse(cls, data: bytes) -> tuple[Self, int]:
         """Parse KDBX header from raw bytes.
@@ -313,6 +316,14 @@ class KdbxHeader:
             aes_kdf_rounds = rounds
             logger.debug("AES-KDF rounds: %d", aes_kdf_rounds)
 
+        # Parse public custom data if present (KDBX4 only)
+        public_custom_data: dict[str, bytes] = {}
+        if HeaderFieldType.PUBLIC_CUSTOM_DATA in fields:
+            custom_data_raw = fields[HeaderFieldType.PUBLIC_CUSTOM_DATA]
+            parsed = cls._parse_variant_dict(custom_data_raw)
+            # Extract only bytes values for custom data
+            public_custom_data = {k: v for k, v in parsed.items() if isinstance(v, bytes)}
+
         return (
             cls(
                 version=version,
@@ -327,6 +338,7 @@ class KdbxHeader:
                 argon2_parallelism=argon2_parallelism,
                 aes_kdf_rounds=aes_kdf_rounds,
                 raw_header=raw_header,
+                public_custom_data=public_custom_data,
             ),
             offset,
         )
@@ -492,6 +504,11 @@ class KdbxHeader:
         kdf_dict = self._build_kdf_variant_dict()
         ctx.write_tlv(HeaderFieldType.KDF_PARAMETERS, kdf_dict)
 
+        # Public custom data (if present)
+        if self.public_custom_data:
+            custom_data_dict = self._build_custom_data_variant_dict()
+            ctx.write_tlv(HeaderFieldType.PUBLIC_CUSTOM_DATA, custom_data_dict)
+
         # End of header
         ctx.write_tlv(HeaderFieldType.END, b"\r\n\r\n")
 
@@ -539,6 +556,29 @@ class KdbxHeader:
 
             # Rounds (UInt64)
             add_entry(0x05, "R", struct.pack("<Q", self.aes_kdf_rounds))
+
+        # End marker
+        ctx.write_u8(0x00)
+
+        return ctx.build()
+
+    def _build_custom_data_variant_dict(self) -> bytes:
+        """Build VariantDictionary for public custom data."""
+        ctx = BuildContext()
+
+        # Version
+        ctx.write_u16(0x0100)
+
+        def add_entry(entry_type: int, key: str, value: bytes) -> None:
+            """Add an entry to the variant dictionary."""
+            key_bytes = key.encode("utf-8")
+            ctx.write_u8(entry_type)
+            ctx.write_bytes_prefixed(key_bytes)
+            ctx.write_bytes_prefixed(value)
+
+        # Add all custom data entries as ByteArray (0x42)
+        for key, value in self.public_custom_data.items():
+            add_entry(0x42, key, value)
 
         # End marker
         ctx.write_u8(0x00)

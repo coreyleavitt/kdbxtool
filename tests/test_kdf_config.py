@@ -3,8 +3,6 @@
 import warnings
 from pathlib import Path
 
-import pytest
-
 from kdbxtool import AesKdfConfig, Argon2Config, Database, KdfType
 
 

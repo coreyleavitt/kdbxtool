@@ -16,6 +16,15 @@ This allows:
 - Multiple devices to unlock the same database
 - Password/keyfile changes without re-enrolling devices
 - Adding backup devices without all devices present
+
+Known limitation - Device metadata visibility:
+    Device type and identifiers (e.g., FIDO2 credential_id, YubiKey slot) are
+    stored in the unencrypted header. This is required for protocol negotiation
+    - we must know HOW to challenge a device before we can decrypt anything.
+    An attacker with file access can see what types of devices are enrolled,
+    but cannot decrypt the database without possessing an enrolled device.
+    Device labels could potentially be moved to encrypted storage in a future
+    version (see GitHub issue for details).
 """
 
 from __future__ import annotations

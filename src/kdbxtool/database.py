@@ -464,6 +464,12 @@ class Database:
             - 'type': Device type (yubikey_hmac, fido2, tpm, etc.)
             - 'id': Device identifier
 
+        Note:
+            Device metadata is stored in the unencrypted header for protocol
+            negotiation. Anyone with file access can enumerate enrolled devices
+            without knowing the password. This is a known limitation - see
+            kdbxtool.security.kek module documentation for details.
+
         Example:
             >>> for device in db.list_enrolled_devices():
             ...     print(f"{device['label']}: {device['type']}")

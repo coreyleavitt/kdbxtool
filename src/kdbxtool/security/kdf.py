@@ -470,29 +470,31 @@ def derive_composite_key(
         yubikey_hmac_response is not None,
     )
 
-    parts: list[bytes] = []
-    secure_parts: list[SecureBytes] = []
+    # Use bytearrays for all intermediates so they can be zeroized
+    parts: list[bytearray] = []
+    composite = bytearray(32)
 
     try:
         if password is not None:
-            # Wrap password hash in SecureBytes for proper zeroization
-            pwd_hash = SecureBytes(hashlib.sha256(password.encode("utf-8")).digest())
-            secure_parts.append(pwd_hash)
-            parts.append(pwd_hash.data)
+            pwd_hash = bytearray(hashlib.sha256(password.encode("utf-8")).digest())
+            parts.append(pwd_hash)
 
         if keyfile_data is not None:
-            key_bytes = parse_keyfile(keyfile_data)
+            key_bytes = bytearray(parse_keyfile(keyfile_data))
             parts.append(key_bytes)
 
         if yubikey_hmac_response is not None:
             # KeePassXC-compatible mode: mix YubiKey HMAC-SHA1 response directly
             # KeePassXC: challenge() returns SHA256 of CR key's rawKey
-            challenge_result = hashlib.sha256(yubikey_hmac_response).digest()
+            challenge_result = bytearray(hashlib.sha256(yubikey_hmac_response).digest())
             parts.append(challenge_result)
 
-        composite = hashlib.sha256(b"".join(parts)).digest()
-        return SecureBytes(composite)
+        composite[:] = hashlib.sha256(b"".join(parts)).digest()
+        return SecureBytes(bytes(composite))
     finally:
-        # Zeroize intermediate values
-        for sp in secure_parts:
-            sp.zeroize()
+        # Zeroize all intermediate values
+        for part in parts:
+            for i in range(len(part)):
+                part[i] = 0
+        for i in range(len(composite)):
+            composite[i] = 0

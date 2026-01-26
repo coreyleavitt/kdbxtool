@@ -75,10 +75,18 @@ class TestHkdfSha256:
         # First 16 bytes should match
         assert key16 == key32[:16]
 
-    def test_length_exceeds_max_raises(self) -> None:
-        """Test that requesting more than 32 bytes raises ValueError."""
-        with pytest.raises(ValueError, match="cannot exceed 32 bytes"):
-            _hkdf_sha256(b"ikm", b"info", length=33)
+    def test_multi_block_expansion(self) -> None:
+        """Test that HKDF supports multi-block expansion (>32 bytes)."""
+        ikm = b"input_keying_material"
+        info = b"domain_info"
+
+        # Request 64 bytes (2 blocks for SHA-256)
+        key64 = _hkdf_sha256(ikm, info, length=64)
+        assert len(key64) == 64
+
+        # First 32 bytes should match single-block output
+        key32 = _hkdf_sha256(ikm, info, length=32)
+        assert key64[:32] == key32
 
     def test_salt_affects_output(self) -> None:
         """Test that different salts produce different keys."""

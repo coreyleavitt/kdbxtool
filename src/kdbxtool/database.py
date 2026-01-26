@@ -509,12 +509,13 @@ class Database:
 
         Args:
             provider: The device provider (YubiKeyHmacSha1, Fido2HmacSecret, etc.)
-            label: User-friendly label (e.g., "Primary YubiKey")
+            label: User-friendly label (e.g., "Primary YubiKey"). Must be
+                non-empty and at most 256 characters.
             device_type: Override auto-detected type (defaults to class name)
             device_id: Override auto-detected ID (defaults to "default")
 
         Raises:
-            ValueError: If label already exists
+            ValueError: If label is empty, too long, or already exists
             DatabaseError: If database has no header (not initialized)
 
         Example:
@@ -545,6 +546,14 @@ class Database:
                 "Cannot enroll device: database was opened with KeePassXC-compatible mode. "
                 "This mode does not support multi-device enrollment. "
                 "To migrate, create a new database and enroll devices using enroll_device()."
+            )
+
+        # Validate label
+        if not label or not label.strip():
+            raise ValueError("Device label cannot be empty")
+        if len(label) > 256:
+            raise ValueError(
+                f"Device label too long: {len(label)} characters (max 256)"
             )
 
         # Check for duplicate label
@@ -1004,7 +1013,7 @@ class Database:
                 transformed_key=transformed_key,
             )
             kek_mode = False
-            kek_data: bytes | None = None
+            kek_secure: SecureBytes | None = None
             cr_salt: bytes | None = None
         else:
             # Check for KEK mode vs KeePassXC-compatible mode
@@ -1032,16 +1041,16 @@ class Database:
                         "Database requires challenge-response device but none provided"
                     )
 
-                # Get CR response and try to unwrap KEK
+                # Get CR response and try to unwrap KEK (returns SecureBytes)
                 response = challenge_response_provider.challenge_response(cr_salt)
-                kek_data = cls._unwrap_kek_from_devices(header, response.data)
+                kek_secure = cls._unwrap_kek_from_devices(header, response.data)
 
                 payload = read_kdbx4(
                     data,
                     password=password,
                     keyfile_data=keyfile_data,
                     transformed_key=transformed_key,
-                    kek=kek_data,
+                    kek=kek_secure.data,
                 )
             else:
                 # KeePassXC-compatible mode: CR response mixed into composite key
@@ -1057,7 +1066,7 @@ class Database:
                     transformed_key=transformed_key,
                     yubikey_hmac_response=challenge_response_data,
                 )
-                kek_data = None
+                kek_secure = None
                 cr_salt = None
 
         # Parse XML into models (with protected value decryption)
@@ -1077,7 +1086,7 @@ class Database:
         db._opened_as_kdbx3 = is_kdbx3
         db._challenge_response_provider = challenge_response_provider
         db._kek_mode = kek_mode
-        db._kek = SecureBytes(kek_data) if kek_data else None
+        db._kek = kek_secure  # Already SecureBytes or None
         db._cr_salt = cr_salt
 
         logger.info("Database opened successfully")
@@ -1090,7 +1099,7 @@ class Database:
         return db
 
     @classmethod
-    def _unwrap_kek_from_devices(cls, header: KdbxHeader, cr_response: bytes) -> bytes:
+    def _unwrap_kek_from_devices(cls, header: KdbxHeader, cr_response: bytes) -> SecureBytes:
         """Try to unwrap KEK using CR response against enrolled devices.
 
         Args:
@@ -1098,7 +1107,7 @@ class Database:
             cr_response: Challenge-response output from provider
 
         Returns:
-            Unwrapped 32-byte KEK
+            Unwrapped 32-byte KEK wrapped in SecureBytes for memory zeroization
 
         Raises:
             AuthenticationError: If CR response doesn't match any enrolled device
@@ -1127,7 +1136,7 @@ class Database:
             try:
                 kek = unwrap_kek(device.wrapped_kek, cr_response)
                 logger.debug("Successfully unwrapped KEK using device: %s", device.label)
-                return kek.data
+                return kek  # Return SecureBytes, caller responsible for zeroization
             except ValueError:
                 # Wrong device (authentication failed), try next
                 logger.debug("Device '%s' did not match, trying next", device.label)

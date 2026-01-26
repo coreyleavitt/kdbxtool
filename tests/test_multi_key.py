@@ -319,6 +319,31 @@ class TestKekModeEnrollment:
         with pytest.raises(ValueError, match="already enrolled"):
             db.enroll_device(provider2, label="Primary")
 
+    def test_enroll_empty_label_fails(self) -> None:
+        """Test that enrolling with empty label fails."""
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            db.enroll_device(provider, label="")
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            db.enroll_device(provider, label="   ")
+
+    def test_enroll_long_label_fails(self) -> None:
+        """Test that enrolling with too-long label fails."""
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+
+        # 256 chars should work
+        db.enroll_device(provider, label="A" * 256)
+        assert db.enrolled_device_count == 1
+
+        # 257 chars should fail
+        provider2 = MockYubiKey.with_secret(b"another_secret___20!")
+        with pytest.raises(ValueError, match="too long"):
+            db.enroll_device(provider2, label="B" * 257)
+
     def test_revoke_device(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test revoking an enrolled device."""
         db = Database.create(password="password")

@@ -20,8 +20,6 @@ This allows:
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import logging
 import os
@@ -29,6 +27,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from Cryptodome.Cipher import AES
+from Cryptodome.Hash import SHA256
+from Cryptodome.Protocol.KDF import HKDF
 
 from .memory import SecureBytes
 
@@ -46,39 +46,26 @@ def _hkdf_sha256(ikm: bytes, info: bytes, length: int = 32, salt: bytes = b"") -
     This provides domain separation to ensure keys derived for different
     purposes are cryptographically independent, even from the same input.
 
+    Uses PyCryptodome's HKDF implementation which properly supports
+    multi-block expansion per RFC 5869.
+
     Args:
         ikm: Input keying material (e.g., CR response)
         info: Context/application-specific info for domain separation
-        length: Desired output length in bytes (max 32 for single block)
+        length: Desired output length in bytes (max 255 * 32 = 8160 for SHA-256)
         salt: Optional salt (defaults to empty, which uses zero-filled salt)
 
     Returns:
         Derived key of specified length
     """
-    if length > 32:
-        raise ValueError("HKDF output length cannot exceed 32 bytes for single block")
-
-    # Use bytearrays for intermediate values so they can be zeroized
-    prk = bytearray(32)
-    okm = bytearray(32)
-
-    try:
-        # HKDF-Extract: PRK = HMAC-Hash(salt, IKM)
-        # If salt is empty, use a zero-filled salt of hash length
-        if not salt:
-            salt = b"\x00" * 32
-        prk[:] = hmac.new(salt, ikm, hashlib.sha256).digest()
-
-        # HKDF-Expand: OKM = HMAC-Hash(PRK, info || 0x01)
-        # For 32 bytes output, only one block is needed
-        okm[:] = hmac.new(bytes(prk), info + b"\x01", hashlib.sha256).digest()
-
-        return bytes(okm[:length])
-    finally:
-        # Zeroize intermediate values
-        for i in range(32):
-            prk[i] = 0
-            okm[i] = 0
+    # PyCryptodome's HKDF uses empty bytes for default salt (matches RFC 5869)
+    return HKDF(
+        master=ikm,
+        key_len=length,
+        salt=salt if salt else None,
+        hashmod=SHA256,
+        context=info,
+    )
 
 
 # CustomData keys for KEK mode storage (strings to match header.public_custom_data)

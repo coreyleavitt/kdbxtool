@@ -43,6 +43,7 @@ Testing Notes:
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -73,6 +74,7 @@ except ImportError:
 if TYPE_CHECKING:
     pass
 
+logger = logging.getLogger(__name__)
 
 # HMAC-SHA1 response is always 20 bytes
 HMAC_SHA1_RESPONSE_SIZE = 20
@@ -135,6 +137,7 @@ def list_yubikeys() -> list[dict[str, str | int]]:
             device_info["serial"] = info.serial
         devices.append(device_info)
 
+    logger.debug("Found %d YubiKey devices", len(devices))
     return devices
 
 
@@ -209,6 +212,7 @@ def compute_challenge_response(
 
     # Convert slot number to SLOT enum
     slot = SLOT.ONE if config.slot == 1 else SLOT.TWO
+    logger.debug("Starting YubiKey challenge-response on slot %d", config.slot)
 
     try:
         # Connect via smartcard interface for challenge-response
@@ -230,6 +234,7 @@ def compute_challenge_response(
             # Calculate challenge response with touch detection
             response = session.calculate_hmac_sha1(slot, challenge, on_keepalive=on_keepalive)
 
+            logger.debug("YubiKey challenge-response complete")
             return SecureBytes(bytes(response))
 
         finally:

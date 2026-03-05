@@ -1,6 +1,5 @@
 """Tests for KDF preset configurations."""
 
-import tempfile
 import warnings
 from pathlib import Path
 
@@ -124,43 +123,33 @@ class TestKdfConfigOnSave:
         db = Database.create(password="test")
         db.root_group.create_entry(title="Test")
 
-        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
-            filepath = Path(f.name)
-
-        try:
-            db.save(filepath=filepath, kdf_config=Argon2Config.fast())
-
-            # Verify we can reopen
-            db2 = Database.open(filepath, password="test")
-            assert db2.find_entries(title="Test", first=True) is not None
-        finally:
-            filepath.unlink(missing_ok=True)
+        data = db.to_bytes(kdf_config=Argon2Config.fast())
+        db2 = Database.open_bytes(data, password="test")
+        assert db2.find_entries(title="Test", first=True) is not None
 
     def test_save_with_high_security_config(self) -> None:
         """Test saving with high security config."""
         db = Database.create(password="test")
 
-        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
-            filepath = Path(f.name)
+        data = db.to_bytes(kdf_config=Argon2Config.high_security())
+        db2 = Database.open_bytes(data, password="test")
+        assert db2.root_group is not None
 
-        try:
-            # Note: This may be slow due to high security parameters
-            db.save(filepath=filepath, kdf_config=Argon2Config.high_security())
-
-            # Verify we can reopen (slow due to KDF)
-            db2 = Database.open(filepath, password="test")
-            assert db2.root_group is not None
-        finally:
-            filepath.unlink(missing_ok=True)
-
-    def test_to_bytes_with_config(self) -> None:
-        """Test to_bytes() with kdf_config."""
+    def test_save_with_aes_kdf_config(self) -> None:
+        """Test saving new database with AES-KDF config."""
         db = Database.create(password="test")
         db.root_group.create_entry(title="Test")
 
-        data = db.to_bytes(kdf_config=Argon2Config.fast())
+        data = db.to_bytes(kdf_config=AesKdfConfig.fast())
+        db2 = Database.open_bytes(data, password="test")
+        assert db2.find_entries(title="Test", first=True) is not None
 
-        # Verify we can reopen from bytes
+    def test_save_with_argon2id_variant(self) -> None:
+        """Test saving with Argon2id variant."""
+        db = Database.create(password="test")
+        db.root_group.create_entry(title="Test")
+
+        data = db.to_bytes(kdf_config=Argon2Config.fast(variant=KdfType.ARGON2ID))
         db2 = Database.open_bytes(data, password="test")
         assert db2.find_entries(title="Test", first=True) is not None
 
@@ -172,109 +161,126 @@ class TestKdfConfigOnUpgrade:
         """Test KDBX3 upgrade uses provided kdf_config."""
         test_file = Path(__file__).parent / "fixtures" / "test3.kdbx"
         test_key = Path(__file__).parent / "fixtures" / "test3.key"
+        keyfile_data = test_key.read_bytes()
 
-        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
-            temp_path = Path(f.name)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            db = Database.open(test_file, password="password", keyfile=test_key)
 
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                db = Database.open(test_file, password="password", keyfile=test_key)
-
-            # Upgrade with fast config (for quick testing)
-            db.save(
-                filepath=temp_path,
-                allow_upgrade=True,
-                kdf_config=Argon2Config.fast(),
-            )
-
-            # Verify the file was saved and can be reopened
-            db2 = Database.open(temp_path, password="password", keyfile=test_key)
-            assert db2.root_group is not None
-        finally:
-            temp_path.unlink(missing_ok=True)
+        data = db.to_bytes(kdf_config=Argon2Config.fast())
+        db2 = Database.open_bytes(data, password="password", keyfile_data=keyfile_data)
+        assert db2.root_group is not None
 
     def test_kdbx3_upgrade_default_uses_standard(self) -> None:
         """Test KDBX3 upgrade uses standard() by default."""
         test_file = Path(__file__).parent / "fixtures" / "test3.kdbx"
         test_key = Path(__file__).parent / "fixtures" / "test3.key"
+        keyfile_data = test_key.read_bytes()
 
-        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
-            temp_path = Path(f.name)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            db = Database.open(test_file, password="password", keyfile=test_key)
 
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                db = Database.open(test_file, password="password", keyfile=test_key)
-
-            # Upgrade without specifying config (should use standard)
-            db.save(filepath=temp_path, allow_upgrade=True)
-
-            # Verify file exists and can be opened
-            db2 = Database.open(temp_path, password="password", keyfile=test_key)
-            assert db2.root_group is not None
-        finally:
-            temp_path.unlink(missing_ok=True)
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="password", keyfile_data=keyfile_data)
+        assert db2.root_group is not None
 
     def test_kdbx3_upgrade_with_aes_kdf(self) -> None:
         """Test KDBX3 upgrade with AES-KDF config."""
         test_file = Path(__file__).parent / "fixtures" / "test3.kdbx"
         test_key = Path(__file__).parent / "fixtures" / "test3.key"
+        keyfile_data = test_key.read_bytes()
 
-        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
-            temp_path = Path(f.name)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            db = Database.open(test_file, password="password", keyfile=test_key)
 
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                db = Database.open(test_file, password="password", keyfile=test_key)
+        data = db.to_bytes(kdf_config=AesKdfConfig.fast())
+        db2 = Database.open_bytes(data, password="password", keyfile_data=keyfile_data)
+        assert db2.root_group is not None
 
-            # Upgrade with AES-KDF (fast for testing)
-            db.save(
-                filepath=temp_path,
-                allow_upgrade=True,
-                kdf_config=AesKdfConfig.fast(),
-            )
 
-            # Verify the file was saved and can be reopened
-            db2 = Database.open(temp_path, password="password", keyfile=test_key)
-            assert db2.root_group is not None
-        finally:
-            temp_path.unlink(missing_ok=True)
+class TestKdfConfigOnKdbx4:
+    """Tests for changing KDF settings on existing KDBX4 databases (issue #64)."""
 
-    def test_save_with_aes_kdf_config(self) -> None:
-        """Test saving new database with AES-KDF config."""
-        db = Database.create(password="test")
-        db.root_group.create_entry(title="Test")
+    def test_change_kdf_config_on_kdbx4(self) -> None:
+        """Test that kdf_config is applied when saving KDBX4 databases."""
+        db = Database.create(password="test", kdf_config=Argon2Config.fast())
+        db.root_group.create_entry(title="Test Entry")
 
-        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
-            filepath = Path(f.name)
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+        assert db2._header is not None
+        assert db2._header.argon2_memory_kib == 16 * 1024  # fast = 16 MiB
 
-        try:
-            db.save(filepath=filepath, kdf_config=AesKdfConfig.fast())
+        # Change to high_security config
+        data2 = db2.to_bytes(kdf_config=Argon2Config.high_security())
+        db3 = Database.open_bytes(data2, password="test")
+        assert db3._header is not None
+        assert db3._header.argon2_memory_kib == 256 * 1024  # high_security = 256 MiB
+        assert db3._header.argon2_iterations == 10
+        assert db3.find_entries(title="Test Entry", first=True) is not None
 
-            # Verify we can reopen
-            db2 = Database.open(filepath, password="test")
-            assert db2.find_entries(title="Test", first=True) is not None
-        finally:
-            filepath.unlink(missing_ok=True)
+    def test_switch_argon2_to_aes_kdf(self) -> None:
+        """Test switching from Argon2 to AES-KDF on KDBX4 database."""
+        db = Database.create(password="test", kdf_config=Argon2Config.fast())
+        db.root_group.create_entry(title="Test Entry")
 
-    def test_save_with_argon2id_variant(self) -> None:
-        """Test saving with Argon2id variant."""
-        db = Database.create(password="test")
-        db.root_group.create_entry(title="Test")
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+        assert db2._header is not None
+        assert db2._header.kdf_type == KdfType.ARGON2D
 
-        with tempfile.NamedTemporaryFile(suffix=".kdbx", delete=False) as f:
-            filepath = Path(f.name)
+        # Switch to AES-KDF
+        data2 = db2.to_bytes(kdf_config=AesKdfConfig.fast())
+        db3 = Database.open_bytes(data2, password="test")
+        assert db3._header is not None
+        assert db3._header.kdf_type == KdfType.AES_KDF
+        assert db3._header.aes_kdf_rounds == 60_000
+        assert db3.find_entries(title="Test Entry", first=True) is not None
 
-        try:
-            db.save(
-                filepath=filepath,
-                kdf_config=Argon2Config.fast(variant=KdfType.ARGON2ID),
-            )
+    def test_switch_aes_kdf_to_argon2(self) -> None:
+        """Test switching from AES-KDF to Argon2 on KDBX4 database."""
+        db = Database.create(password="test", kdf_config=AesKdfConfig.fast())
+        db.root_group.create_entry(title="Test Entry")
 
-            # Verify we can reopen
-            db2 = Database.open(filepath, password="test")
-            assert db2.find_entries(title="Test", first=True) is not None
-        finally:
-            filepath.unlink(missing_ok=True)
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+        assert db2._header is not None
+        assert db2._header.kdf_type == KdfType.AES_KDF
+
+        # Switch to Argon2
+        data2 = db2.to_bytes(kdf_config=Argon2Config.fast())
+        db3 = Database.open_bytes(data2, password="test")
+        assert db3._header is not None
+        assert db3._header.kdf_type == KdfType.ARGON2D
+        assert db3._header.argon2_memory_kib == 16 * 1024
+        assert db3.find_entries(title="Test Entry", first=True) is not None
+
+    def test_kdf_change_preserves_all_data(self) -> None:
+        """Test that changing KDF preserves entries, groups, and passwords."""
+        db = Database.create(password="test", kdf_config=Argon2Config.fast())
+        group = db.root_group.create_subgroup(name="Test Group")
+        group.create_entry(
+            title="Test Entry",
+            username="testuser",
+            password="secretpass",
+            url="https://example.com",
+        )
+
+        data = db.to_bytes()
+        db2 = Database.open_bytes(data, password="test")
+
+        # Change KDF
+        data2 = db2.to_bytes(kdf_config=AesKdfConfig.standard())
+        db3 = Database.open_bytes(data2, password="test")
+        assert db3._header is not None
+        assert db3._header.kdf_type == KdfType.AES_KDF
+
+        # Verify all data preserved
+        found = db3.find_entries(title="Test Entry", first=True)
+        assert found is not None
+        assert found.username == "testuser"
+        assert found.password == "secretpass"
+        assert found.url == "https://example.com"
+        assert len(list(db3.find_groups(name="Test Group"))) == 1

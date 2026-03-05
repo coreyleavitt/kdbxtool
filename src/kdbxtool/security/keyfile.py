@@ -19,6 +19,7 @@ Example:
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from enum import StrEnum
 from pathlib import Path
@@ -26,6 +27,8 @@ from pathlib import Path
 from kdbxtool.exceptions import InvalidKeyFileError
 
 from .crypto import constant_time_compare
+
+logger = logging.getLogger(__name__)
 
 
 class KeyFileVersion(StrEnum):
@@ -101,6 +104,7 @@ def create_keyfile(
         # Create raw binary keyfile
         create_keyfile("vault.key", version=KeyFileVersion.RAW_32)
     """
+    logger.info("Creating %s keyfile", version.value)
     keyfile_data = create_keyfile_bytes(version)
     Path(path).write_bytes(keyfile_data)
 
@@ -137,9 +141,11 @@ def parse_keyfile(keyfile_data: bytes) -> bytes:
             version = version_elem.text or ""
             if version.startswith("1.0"):
                 # Version 1.0: base64 encoded
+                logger.debug("Parsing XML v1.0 keyfile")
                 return base64.b64decode(data_elem.text or "")
             elif version.startswith("2.0"):
                 # Version 2.0: hex encoded with hash verification
+                logger.debug("Parsing XML v2.0 keyfile")
                 key_hex = (data_elem.text or "").strip()
                 key_bytes = bytes.fromhex(key_hex)
                 # Verify hash if present (constant-time comparison)
@@ -154,6 +160,7 @@ def parse_keyfile(keyfile_data: bytes) -> bytes:
 
     # Check for raw 32-byte key
     if len(keyfile_data) == 32:
+        logger.debug("Using raw 32-byte keyfile")
         return keyfile_data
 
     # Check for 64-byte hex-encoded key
@@ -161,11 +168,13 @@ def parse_keyfile(keyfile_data: bytes) -> bytes:
         try:
             # Verify it's valid hex
             int(keyfile_data, 16)
+            logger.debug("Using 64-byte hex keyfile")
             return bytes.fromhex(keyfile_data.decode("ascii"))
         except (ValueError, UnicodeDecodeError):
             pass  # Not hex
 
     # Hash anything else
+    logger.debug("Hashing %d-byte keyfile", len(keyfile_data))
     return hashlib.sha256(keyfile_data).digest()
 
 

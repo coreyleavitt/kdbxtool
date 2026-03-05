@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import logging
 import struct
 import warnings
 from dataclasses import dataclass
@@ -54,6 +55,8 @@ from .header import (
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 # Maximum size for a single binary attachment (512 MiB)
 # Prevents memory exhaustion from malicious KDBX files
@@ -121,6 +124,8 @@ class Kdbx4Reader:
         Raises:
             ValueError: If decryption fails (wrong credentials, corrupted file)
         """
+        logger.debug("Starting KDBX4 decryption")
+
         # Parse outer header
         header, header_end = KdbxHeader.parse(self._ctx.data)
 
@@ -138,14 +143,17 @@ class Kdbx4Reader:
         computed_hash = hashlib.sha256(header.raw_header).digest()
         if not constant_time_compare(computed_hash, header_hash):
             raise CorruptedDataError("Header hash mismatch - file may be corrupted")
+        logger.debug("Header hash verified")
 
         # Get transformed key - either use provided one or derive via KDF
         if transformed_key is not None:
             # Use precomputed transformed key (skips expensive KDF)
+            logger.debug("Using cached transformed key")
             master_key_bytes = transformed_key
         else:
             # Derive composite key from credentials
             # KeePassXC: YubiKey response is incorporated into composite key
+            logger.debug("Starting KDF derivation")
             composite_key = derive_composite_key(
                 password=password,
                 keyfile_data=keyfile_data,
@@ -163,6 +171,7 @@ class Kdbx4Reader:
         computed_hmac = compute_hmac_sha256(block_key, header.raw_header)
         if not constant_time_compare(computed_hmac, header_hmac):
             raise AuthenticationError()
+        logger.debug("Header HMAC verified")
 
         # Read and verify HMAC block stream
         encrypted_payload = self._read_hmac_block_stream(hmac_key)
@@ -178,6 +187,8 @@ class Kdbx4Reader:
         # Decompress if needed
         if header.compression == CompressionType.GZIP:
             decrypted = gzip.decompress(decrypted)
+
+        logger.debug("Payload decrypted, %d bytes", len(decrypted))
 
         # Parse inner header
         inner_header, xml_start = self._parse_inner_header(decrypted)
@@ -298,6 +309,7 @@ class Kdbx4Reader:
                     blocks.append(block_data)
                     block_index += 1
 
+        logger.debug("Verified %d HMAC blocks", block_index)
         return b"".join(blocks)
 
     def _remove_pkcs7_padding(self, data: bytes) -> bytes:
@@ -394,6 +406,8 @@ class Kdbx4Writer:
         Returns:
             Complete KDBX4 file as bytes
         """
+        logger.debug("Starting KDBX4 encryption")
+
         if header.version != KdbxVersion.KDBX4:
             raise UnsupportedVersionError(header.version.value, 0)
 

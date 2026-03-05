@@ -22,7 +22,8 @@ Example:
     db.save()
 """
 
-__version__ = "0.1.5"
+import logging
+from importlib.metadata import version
 
 from .database import Database, DatabaseSettings
 from .exceptions import (
@@ -70,6 +71,12 @@ from .security.yubikey import (
     list_yubikeys,
 )
 from .templates import EntryTemplate, IconId, Templates
+
+__version__ = version("kdbxtool")
+
+# Configure library logger to prevent "No handler found" warnings
+# when users don't configure logging in their applications
+logging.getLogger("kdbxtool").addHandler(logging.NullHandler())
 
 __all__ = [
     # Core classes

@@ -35,6 +35,7 @@ from .exceptions import (
     DatabaseError,
     DecryptionError,
     EntryNotFoundError,
+    ExperimentalWarning,
     Fido2CredentialNotFoundError,
     Fido2DeviceNotFoundError,
     Fido2Error,
@@ -131,6 +132,8 @@ __all__ = [
     "YubiKeyConfig",
     "check_slot_configured",
     "list_yubikeys",
+    # Warnings
+    "ExperimentalWarning",
     # Exceptions
     "KdbxError",
     "FormatError",

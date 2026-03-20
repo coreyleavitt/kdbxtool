@@ -3,6 +3,9 @@
 This module provides a rich exception hierarchy for better error handling
 and user feedback. All exceptions inherit from KdbxError.
 
+Warning Hierarchy:
+    ExperimentalWarning (UserWarning) -- filterable via warnings.filterwarnings
+
 Exception Hierarchy:
     KdbxError (base)
     ├── FormatError
@@ -40,6 +43,18 @@ Security Note:
 """
 
 from __future__ import annotations
+
+
+class ExperimentalWarning(UserWarning):
+    """Warning for experimental features that may change or be removed.
+
+    Emitted when using features that are not yet considered stable,
+    such as KEK mode for multi-device challenge-response enrollment.
+    Can be filtered with::
+
+        import warnings
+        warnings.filterwarnings("ignore", category=ExperimentalWarning)
+    """
 
 
 class KdbxError(Exception):

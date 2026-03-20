@@ -6,6 +6,7 @@ from kdbxtool.security.kek import (
     CR_DEVICE_PREFIX,
     CR_SALT_KEY,
     CR_VERSION_KEY,
+    HKDF_INFO_FINAL_KEY,
     HKDF_INFO_KEK_WRAP,
     MIN_CR_RESPONSE_LENGTH,
     VERSION_COMPAT,
@@ -345,7 +346,7 @@ class TestWrapUnwrapKek:
 
 
 class TestDeriveFinalKey:
-    """Tests for derive_final_key function."""
+    """Tests for derive_final_key function (HKDF-SHA256)."""
 
     def test_basic_derivation(self) -> None:
         """Test basic final key derivation."""
@@ -356,16 +357,40 @@ class TestDeriveFinalKey:
         assert isinstance(final, SecureBytes)
         assert len(final.data) == 32
 
-    def test_xor_operation(self) -> None:
-        """Test that derivation is XOR."""
+    def test_hkdf_operation(self) -> None:
+        """Test that derivation uses HKDF-SHA256 with proper parameters."""
         base = bytes(range(32))
         kek = bytes([0x55] * 32)
 
         final = derive_final_key(base, kek)
 
-        # Verify XOR
-        expected = bytes(a ^ 0x55 for a in range(32))
+        # Verify it matches direct HKDF call:
+        # HKDF-Extract(salt=base_master_key, ikm=kek) -> Expand(info=FINAL_KEY)
+        expected = _hkdf_sha256(ikm=kek, info=HKDF_INFO_FINAL_KEY, salt=base)
         assert final.data == expected
+
+    def test_deterministic(self) -> None:
+        """Test that same inputs produce same output."""
+        base = b"b" * 32
+        kek = b"k" * 32
+
+        final1 = derive_final_key(base, kek)
+        final2 = derive_final_key(base, kek)
+        assert final1.data == final2.data
+
+    def test_different_base_produces_different_key(self) -> None:
+        """Test that different base_master_key produces different final key."""
+        kek = b"k" * 32
+        final1 = derive_final_key(b"a" * 32, kek)
+        final2 = derive_final_key(b"b" * 32, kek)
+        assert final1.data != final2.data
+
+    def test_different_kek_produces_different_key(self) -> None:
+        """Test that different KEK produces different final key."""
+        base = b"b" * 32
+        final1 = derive_final_key(base, b"k" * 32)
+        final2 = derive_final_key(base, b"j" * 32)
+        assert final1.data != final2.data
 
     def test_wrong_base_size_fails(self) -> None:
         """Test that wrong base_master_key size fails."""
@@ -377,16 +402,9 @@ class TestDeriveFinalKey:
         with pytest.raises(ValueError, match="kek must be 32 bytes"):
             derive_final_key(b"b" * 32, b"short")
 
-    def test_reversible_with_same_kek(self) -> None:
-        """Test that XOR is reversible with same KEK."""
-        base = b"b" * 32
-        kek = b"k" * 32
-
-        final = derive_final_key(base, kek)
-        # XOR again to get back base
-        recovered = derive_final_key(final.data, kek)
-
-        assert recovered.data == base
+    def test_final_key_info_constant(self) -> None:
+        """Test that the final key info constant is set correctly."""
+        assert HKDF_INFO_FINAL_KEY == b"kdbxtool-final-key-v1"
 
 
 class TestEnrolledDevice:

@@ -17,8 +17,11 @@ from kdbxtool import (
     Database,
     DatabaseError,
 )
+from kdbxtool.exceptions import ExperimentalWarning  # noqa: F401
 from kdbxtool.security.memory import SecureBytes
 from kdbxtool.testing import MockFido2, MockProvider, MockYubiKey
+
+pytestmark = pytest.mark.filterwarnings("ignore::kdbxtool.exceptions.ExperimentalWarning")
 
 
 class TestDifferentProviderTypes:
@@ -154,7 +157,7 @@ class TestMixedProviderTypes:
         fido2 = MockFido2.with_test_secret()
 
         db = Database.create(password="password")
-        db.enroll_device(yubikey, label="YubiKey")
+        db.enroll_device(yubikey, label="YubiKey", mode="kek")
         db_path = Path(str(tmp_path)) / "yubikey_db.kdbx"
         db.save(db_path)
 
@@ -170,7 +173,7 @@ class TestMixedProviderTypes:
         fido2 = MockFido2.with_test_secret()
 
         db = Database.create(password="password")
-        db.enroll_device(fido2, label="FIDO2")
+        db.enroll_device(fido2, label="FIDO2", mode="kek")
         db_path = Path(str(tmp_path)) / "fido2_db.kdbx"
         db.save(db_path)
 
@@ -279,7 +282,7 @@ class TestKekModeEnrollment:
         assert db.enrolled_device_count == 0
 
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary YubiKey")
+        db.enroll_device(provider, label="Primary YubiKey", mode="kek")
 
         assert db.kek_mode
         assert db.enrolled_device_count == 1
@@ -296,8 +299,8 @@ class TestKekModeEnrollment:
         provider1 = MockYubiKey.with_secret(b"secret_one_here__20!")
         provider2 = MockYubiKey.with_secret(b"secret_two_here__20!")
 
-        db.enroll_device(provider1, label="Primary")
-        db.enroll_device(provider2, label="Backup")
+        db.enroll_device(provider1, label="Primary", mode="kek")
+        db.enroll_device(provider2, label="Backup", mode="kek")
 
         assert db.kek_mode
         assert db.enrolled_device_count == 2
@@ -314,10 +317,10 @@ class TestKekModeEnrollment:
         provider1 = MockYubiKey.with_secret(b"secret_one_here__20!")
         provider2 = MockYubiKey.with_secret(b"secret_two_here__20!")
 
-        db.enroll_device(provider1, label="Primary")
+        db.enroll_device(provider1, label="Primary", mode="kek")
 
         with pytest.raises(ValueError, match="already enrolled"):
-            db.enroll_device(provider2, label="Primary")
+            db.enroll_device(provider2, label="Primary", mode="kek")
 
     def test_enroll_empty_label_fails(self) -> None:
         """Test that enrolling with empty label fails."""
@@ -325,10 +328,10 @@ class TestKekModeEnrollment:
         provider = MockYubiKey.with_test_secret()
 
         with pytest.raises(ValueError, match="cannot be empty"):
-            db.enroll_device(provider, label="")
+            db.enroll_device(provider, label="", mode="kek")
 
         with pytest.raises(ValueError, match="cannot be empty"):
-            db.enroll_device(provider, label="   ")
+            db.enroll_device(provider, label="   ", mode="kek")
 
     def test_enroll_long_label_fails(self) -> None:
         """Test that enrolling with too-long label fails."""
@@ -336,13 +339,13 @@ class TestKekModeEnrollment:
         provider = MockYubiKey.with_test_secret()
 
         # 256 chars should work
-        db.enroll_device(provider, label="A" * 256)
+        db.enroll_device(provider, label="A" * 256, mode="kek")
         assert db.enrolled_device_count == 1
 
         # 257 chars should fail
         provider2 = MockYubiKey.with_secret(b"another_secret___20!")
         with pytest.raises(ValueError, match="too long"):
-            db.enroll_device(provider2, label="B" * 257)
+            db.enroll_device(provider2, label="B" * 257, mode="kek")
 
     def test_revoke_device(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test revoking an enrolled device."""
@@ -351,12 +354,12 @@ class TestKekModeEnrollment:
         provider1 = MockYubiKey.with_secret(b"secret_one_here__20!")
         provider2 = MockYubiKey.with_secret(b"secret_two_here__20!")
 
-        db.enroll_device(provider1, label="Primary")
-        db.enroll_device(provider2, label="Backup")
+        db.enroll_device(provider1, label="Primary", mode="kek")
+        db.enroll_device(provider2, label="Backup", mode="kek")
 
         assert db.enrolled_device_count == 2
 
-        db.revoke_device("Primary")
+        db.revoke_device("Primary", remaining_providers={"Backup": provider2})
 
         assert db.enrolled_device_count == 1
         devices = db.list_enrolled_devices()
@@ -368,20 +371,20 @@ class TestKekModeEnrollment:
         db = Database.create(password="password")
 
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
-        with pytest.raises(ValueError, match="at least one must remain"):
-            db.revoke_device("Primary")
+        with pytest.raises(ValueError, match="At least one remaining provider"):
+            db.revoke_device("Primary", remaining_providers={})
 
     def test_revoke_unknown_device_fails(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that revoking unknown device fails."""
         db = Database.create(password="password")
 
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         with pytest.raises(ValueError, match="not found"):
-            db.revoke_device("Unknown")
+            db.revoke_device("Unknown", remaining_providers={"Primary": provider})
 
     def test_enroll_on_compat_database_fails(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that enrolling on a KeePassXC-compatible mode database fails."""
@@ -389,21 +392,22 @@ class TestKekModeEnrollment:
 
         from kdbxtool.exceptions import DatabaseError
 
-        # Create database with compat mode (using challenge_response_provider directly)
+        # Create database with compat mode
         db = Database.create(password="password")
         compat_provider = MockYubiKey.with_test_secret()
+        db.enroll_device(compat_provider, label="Primary", mode="compat")
         db_path = Path(str(tmp_path)) / "compat.kdbx"
-        db.save(db_path, challenge_response_provider=compat_provider)
+        db.save(db_path)
 
         # Open with KeePassXC-compatible mode
         db2 = Database.open(
             db_path, password="password", challenge_response_provider=compat_provider
         )
 
-        # Try to enroll another device - should fail
+        # Try to enroll another device in KEK mode - should fail
         new_provider = MockYubiKey.with_secret(b"different_secret_20!")
         with pytest.raises(DatabaseError, match="KeePassXC-compatible"):
-            db2.enroll_device(new_provider, label="New Device")
+            db2.enroll_device(new_provider, label="New Device", mode="kek")
 
     def test_enrollment_atomic_on_provider_failure(self) -> None:
         """Test that enrollment is atomic - no state changes if provider fails."""
@@ -424,7 +428,7 @@ class TestKekModeEnrollment:
         # Attempt enrollment with failing provider
         failing_provider = FailingProvider()
         with pytest.raises(ChallengeResponseError, match="Device not connected"):
-            db.enroll_device(failing_provider, label="Failing Device")
+            db.enroll_device(failing_provider, label="Failing Device", mode="kek")
 
         # Verify no state was modified
         assert not db.kek_mode, "KEK mode should not be enabled after failed enrollment"
@@ -443,7 +447,7 @@ class TestKekModeEnrollment:
 
         db = Database.create(password="password")
         first_provider = MockYubiKey.with_test_secret()
-        db.enroll_device(first_provider, label="First Device")
+        db.enroll_device(first_provider, label="First Device", mode="kek")
 
         # Capture state after first enrollment
         assert db.kek_mode
@@ -454,7 +458,7 @@ class TestKekModeEnrollment:
         # Attempt to add second device with failing provider
         failing_provider = FailingProvider()
         with pytest.raises(ChallengeResponseError, match="Device not connected"):
-            db.enroll_device(failing_provider, label="Failing Device")
+            db.enroll_device(failing_provider, label="Failing Device", mode="kek")
 
         # Verify state unchanged
         assert db.kek_mode, "KEK mode should still be enabled"
@@ -472,7 +476,7 @@ class TestKekModeRoundtrip:
 
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         db.root_group.create_entry(
             title="Test Entry",
@@ -502,8 +506,8 @@ class TestKekModeRoundtrip:
         provider1 = MockYubiKey.with_secret(b"secret_one_here__20!")
         provider2 = MockYubiKey.with_secret(b"secret_two_here__20!")
 
-        db.enroll_device(provider1, label="Primary")
-        db.enroll_device(provider2, label="Backup")
+        db.enroll_device(provider1, label="Primary", mode="kek")
+        db.enroll_device(provider2, label="Backup", mode="kek")
 
         db.root_group.create_entry(title="Secret", username="user", password="pass")
 
@@ -531,7 +535,7 @@ class TestKekModeRoundtrip:
         correct_provider = MockYubiKey.with_secret(b"correct_secret__20_!")
         wrong_provider = MockYubiKey.with_secret(b"wrong_secret____20_!")
 
-        db.enroll_device(correct_provider, label="Primary")
+        db.enroll_device(correct_provider, label="Primary", mode="kek")
 
         db_path = Path(str(tmp_path)) / "kek_wrong.kdbx"
         db.save(db_path)
@@ -548,7 +552,7 @@ class TestKekModeRoundtrip:
 
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         db_path = Path(str(tmp_path)) / "kek_no_device.kdbx"
         db.save(db_path)
@@ -567,7 +571,7 @@ class TestKekModeErrorPaths:
 
         db = Database.create(password="correct_password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
         db_path = Path(str(tmp_path)) / "test.kdbx"
         db.save(db_path)
 
@@ -581,7 +585,7 @@ class TestKekModeErrorPaths:
 
         db = Database.create(password="password")
         correct_provider = MockYubiKey.with_test_secret()
-        db.enroll_device(correct_provider, label="Primary")
+        db.enroll_device(correct_provider, label="Primary", mode="kek")
         db_path = Path(str(tmp_path)) / "test.kdbx"
         db.save(db_path)
 
@@ -598,7 +602,7 @@ class TestKekModeErrorPaths:
 
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
         db_path = Path(str(tmp_path)) / "test.kdbx"
         db.save(db_path)
 
@@ -623,7 +627,7 @@ class TestKekModeErrorPaths:
 
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
         db_path = Path(str(tmp_path)) / "test.kdbx"
         db.save(db_path)
 
@@ -647,7 +651,7 @@ class TestKekModeWithFido2:
 
         db = Database.create(password="password")
         provider = MockFido2.with_test_secret()
-        db.enroll_device(provider, label="FIDO2 Key")
+        db.enroll_device(provider, label="FIDO2 Key", mode="kek")
 
         assert db.kek_mode
         assert db.enrolled_device_count == 1
@@ -662,7 +666,7 @@ class TestKekModeWithFido2:
 
         db = Database.create(password="password")
         provider = MockFido2.with_test_secret()
-        db.enroll_device(provider, label="FIDO2 Key")
+        db.enroll_device(provider, label="FIDO2 Key", mode="kek")
 
         db.root_group.create_entry(title="FIDO2 Entry", username="fido", password="secret")
 
@@ -684,8 +688,8 @@ class TestKekModeWithFido2:
         yubikey = MockYubiKey.with_test_secret()
         fido2 = MockFido2.with_test_secret()
 
-        db.enroll_device(yubikey, label="YubiKey Primary")
-        db.enroll_device(fido2, label="FIDO2 Backup")
+        db.enroll_device(yubikey, label="YubiKey Primary", mode="kek")
+        db.enroll_device(fido2, label="FIDO2 Backup", mode="kek")
 
         assert db.kek_mode
         assert db.enrolled_device_count == 2
@@ -717,7 +721,7 @@ class TestKekModeCredentialChanges:
 
         db = Database.create(password="original_password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         db.root_group.create_entry(title="Secret", password="secret_value")
 
@@ -746,7 +750,7 @@ class TestKekModeCredentialChanges:
 
         db = Database.create(password="original_password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         db_path = Path(str(tmp_path)) / "password_change_fail.kdbx"
         db.save(db_path)
@@ -772,7 +776,7 @@ class TestKekModeCredentialChanges:
 
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         db.root_group.create_entry(title="Secret", password="secret_value")
 
@@ -820,7 +824,7 @@ class TestKekModeCredentialChanges:
 
         db = Database.create(password="password", keyfile=keyfile1_path)
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         db.root_group.create_entry(title="Secret", password="secret_value")
 
@@ -865,7 +869,7 @@ class TestKekModeCredentialChanges:
 
         db = Database.create(password="password", keyfile=keyfile_path)
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         db.root_group.create_entry(title="Secret", password="secret_value")
 
@@ -901,7 +905,7 @@ class TestDisableKekMode:
 
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         db.root_group.create_entry(title="Secret", password="secret_value")
 
@@ -932,7 +936,7 @@ class TestDisableKekMode:
 
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         db_path = Path(str(tmp_path)) / "test.kdbx"
         db.save(db_path)
@@ -964,8 +968,8 @@ class TestDisableKekMode:
         provider1 = MockYubiKey.with_secret(b"secret_one_here__20!")
         provider2 = MockYubiKey.with_secret(b"secret_two_here__20!")
 
-        db.enroll_device(provider1, label="Primary")
-        db.enroll_device(provider2, label="Backup")
+        db.enroll_device(provider1, label="Primary", mode="kek")
+        db.enroll_device(provider2, label="Backup", mode="kek")
 
         assert db.enrolled_device_count == 2
 
@@ -990,7 +994,7 @@ class TestDisableKekMode:
 
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         # Add various content
         db.root_group.create_entry(
@@ -1038,7 +1042,7 @@ class TestRotateKek:
 
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         db.root_group.create_entry(title="Secret", password="secret_value")
 
@@ -1069,7 +1073,7 @@ class TestRotateKek:
         old_provider = MockYubiKey.with_secret(b"old_secret_here__20!")
         new_provider = MockYubiKey.with_secret(b"new_secret_here__20!")
 
-        db.enroll_device(old_provider, label="Old Device")
+        db.enroll_device(old_provider, label="Old Device", mode="kek")
 
         db.root_group.create_entry(title="Secret", password="secret_value")
 
@@ -1103,8 +1107,8 @@ class TestRotateKek:
         provider2 = MockYubiKey.with_secret(b"secret_two_here__20!")
         provider3 = MockYubiKey.with_secret(b"secret_three____20!")
 
-        db.enroll_device(provider1, label="Device1")
-        db.enroll_device(provider2, label="Device2")
+        db.enroll_device(provider1, label="Device1", mode="kek")
+        db.enroll_device(provider2, label="Device2", mode="kek")
 
         db_path = Path(str(tmp_path)) / "multi_rotate.kdbx"
         db.save(db_path)
@@ -1143,7 +1147,7 @@ class TestRotateKek:
         """Test that rotate_kek fails with empty providers dict."""
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         with pytest.raises(ValueError, match="At least one provider"):
             db.rotate_kek({})
@@ -1157,8 +1161,8 @@ class TestRotateKek:
         compromised = MockYubiKey.with_secret(b"compromised_key__20!")
         backup = MockYubiKey.with_secret(b"backup_key_here__20!")
 
-        db.enroll_device(compromised, label="Compromised")
-        db.enroll_device(backup, label="Backup")
+        db.enroll_device(compromised, label="Compromised", mode="kek")
+        db.enroll_device(backup, label="Backup", mode="kek")
 
         db.root_group.create_entry(title="Secret", password="secret_value")
 
@@ -1168,7 +1172,7 @@ class TestRotateKek:
         # Simulate: device compromised, revoke and rotate
         db2 = Database.open(db_path, password="password", challenge_response_provider=backup)
 
-        db2.revoke_device("Compromised")
+        db2.revoke_device("Compromised", remaining_providers={"Backup": backup})
         db2.rotate_kek({"Backup": backup})
         db2.save(db_path)
 
@@ -1190,7 +1194,7 @@ class TestRotateKek:
 
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
-        db.enroll_device(provider, label="Primary")
+        db.enroll_device(provider, label="Primary", mode="kek")
 
         # Add various content
         db.root_group.create_entry(

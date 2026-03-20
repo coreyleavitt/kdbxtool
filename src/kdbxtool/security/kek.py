@@ -1,5 +1,10 @@
 """Key Encryption Key (KEK) wrapping for multi-device support.
 
+.. warning:: **Experimental** -- KEK mode is not yet considered stable. The
+   on-disk format and API may change in future releases.  Databases created
+   in KEK mode are **not** compatible with KeePassXC, KeePassDX, or other
+   KeePass applications.
+
 This module provides KEK-based challenge-response device enrollment, enabling
 multiple hardware devices (YubiKeys, FIDO2 keys, TPMs) to unlock the same
 database. Each enrolled device wraps the same KEK with its unique CR output.
@@ -10,7 +15,7 @@ Security model:
   separation to derive an AES-256 key (prevents key confusion attacks)
 - The KEK is encrypted with AES-256-GCM for each enrolled device
 - Password/keyfile derive the "base master key" independently
-- Final master key = base_master_key XOR KEK
+- Final master key = HKDF-SHA256(salt=base_master_key, ikm=kek, info="kdbxtool-final-key-v1")
 
 This allows:
 - Multiple devices to unlock the same database
@@ -47,6 +52,9 @@ logger = logging.getLogger(__name__)
 # This ensures keys derived for KEK wrapping cannot be confused with keys
 # derived for other purposes, even if the same CR response is used elsewhere
 HKDF_INFO_KEK_WRAP = b"kdbxtool-kek-wrap-v1"
+
+# Domain separation info for final key derivation (base_master_key + KEK)
+HKDF_INFO_FINAL_KEY = b"kdbxtool-final-key-v1"
 
 
 def _hkdf_sha256(ikm: bytes, info: bytes, length: int = 32, salt: bytes = b"") -> bytes:
@@ -237,8 +245,14 @@ def unwrap_kek(wrapped: bytes, cr_response: bytes) -> SecureBytes:
 def derive_final_key(base_master_key: bytes, kek: bytes) -> SecureBytes:
     """Combine base master key with KEK to get final encryption key.
 
-    Uses XOR which is secure when both inputs are cryptographically
-    random or derived from strong key derivation.
+    Uses HKDF-SHA256 (RFC 5869) for proper key combination:
+    - Extract: HKDF-Extract(salt=base_master_key, ikm=kek) produces a PRK
+    - Expand: HKDF-Expand(prk, info="kdbxtool-final-key-v1", length=32)
+
+    This is cryptographically stronger than XOR because HKDF provides:
+    - Domain separation via the info parameter
+    - Proper key mixing even if one input has structure
+    - Forward-compatible with longer key material
 
     Args:
         base_master_key: 32-byte key from password/keyfile KDF
@@ -255,7 +269,7 @@ def derive_final_key(base_master_key: bytes, kek: bytes) -> SecureBytes:
     if len(kek) != 32:
         raise ValueError(f"kek must be 32 bytes, got {len(kek)}")
 
-    final = bytes(a ^ b for a, b in zip(base_master_key, kek, strict=True))
+    final = _hkdf_sha256(ikm=kek, info=HKDF_INFO_FINAL_KEY, salt=base_master_key)
     return SecureBytes(final)
 
 

@@ -896,6 +896,7 @@ class Database:
         # Generate new salt and KEK
         new_salt = generate_salt()
         new_kek = generate_kek()
+        committed = False
 
         try:
             # Build new device entries in temporary structure
@@ -946,7 +947,7 @@ class Database:
             # Zeroize old KEK and set new one
             old_kek = self._kek
             self._kek = new_kek
-            new_kek = None  # Prevent zeroization in finally block
+            committed = True
             if old_kek is not None:
                 old_kek.zeroize()
 
@@ -956,7 +957,7 @@ class Database:
             )
         finally:
             # Zeroize new_kek if we failed before committing
-            if new_kek is not None:
+            if not committed:
                 new_kek.zeroize()
 
     # --- Opening databases ---

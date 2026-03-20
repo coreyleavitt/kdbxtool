@@ -38,7 +38,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from Cryptodome.Cipher import AES
 from Cryptodome.Hash import SHA256
@@ -75,13 +75,17 @@ def _hkdf_sha256(ikm: bytes, info: bytes, length: int = 32, salt: bytes = b"") -
     Returns:
         Derived key of specified length
     """
-    # PyCryptodome's HKDF uses empty bytes for default salt (matches RFC 5869)
-    return HKDF(
-        master=ikm,
-        key_len=length,
-        salt=salt if salt else None,
-        hashmod=SHA256,
-        context=info,
+    # PyCryptodome's HKDF with num_keys=1 (default) returns bytes, but the
+    # stub types it as bytes | tuple[bytes, ...]. Cast to narrow the type.
+    return cast(
+        bytes,
+        HKDF(
+            master=ikm,
+            key_len=length,
+            salt=salt or b"\x00" * 32,  # RFC 5869: zero-filled salt of hash length
+            hashmod=SHA256,
+            context=info,
+        ),
     )
 
 

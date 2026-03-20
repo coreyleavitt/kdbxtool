@@ -65,8 +65,8 @@ try:
     FIDO2_AVAILABLE = True
 except ImportError:
     FIDO2_AVAILABLE = False
-    # Define placeholders for type checking
-    UserInteraction = object  # type: ignore[misc,assignment]
+    # Placeholder so subclass definitions parse at runtime when fido2 is absent
+    UserInteraction = object
 
 if TYPE_CHECKING:
     pass
@@ -171,9 +171,7 @@ def create_fido2_credential(
             device,
             client_data_collector=client_data_collector,
             user_interaction=CreationInteraction(),
-            extensions=[
-                HmacSecretExtension(allow_hmac_secret=True)  # type: ignore[no-untyped-call]
-            ],
+            extensions=[HmacSecretExtension(allow_hmac_secret=True)],
         )
 
         # Check for hmac-secret support
@@ -335,9 +333,7 @@ class Fido2HmacSecret(ABC):
                 self._device,
                 client_data_collector=client_data_collector,
                 user_interaction=user_interaction,
-                extensions=[
-                    HmacSecretExtension(allow_hmac_secret=True)  # type: ignore[no-untyped-call]
-                ],
+                extensions=[HmacSecretExtension(allow_hmac_secret=True)],
             )
 
             # Get assertion with hmac-secret extension

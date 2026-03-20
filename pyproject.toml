@@ -67,6 +67,25 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 
+[[tool.mypy.overrides]]
+module = [
+    "ykman.*",
+    "yubikit.*",
+    "fido2.*",
+    "oxifish",
+]
+ignore_missing_imports = true
+
+# Modules that subclass or return types from optional deps (fido2, oxifish, ykman)
+# get Any-typed bases and return values when those deps are absent
+[[tool.mypy.overrides]]
+module = [
+    "kdbxtool.security.fido2",
+    "kdbxtool.security.yubikey",
+]
+disallow_subclassing_any = false
+warn_return_any = false
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

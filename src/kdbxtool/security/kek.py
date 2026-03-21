@@ -101,10 +101,36 @@ VERSION_KEK = b"\x02"  # KEK wrapping (multi-key support)
 # Wrapped KEK size: nonce (16, PyCryptodome default) + tag (16) + ciphertext (32) = 64 bytes
 WRAPPED_KEK_SIZE = 64
 
+# Maximum label length for enrolled devices
+MAX_LABEL_LENGTH = 256
+
 # Minimum CR response length for security (128 bits)
 # YubiKey HMAC-SHA1 = 20 bytes, FIDO2 hmac-secret = 32 bytes
 # Anything shorter than 16 bytes provides insufficient entropy
 MIN_CR_RESPONSE_LENGTH = 16
+
+# Reserved keys in device metadata JSON (used for required fields)
+_RESERVED_DEVICE_KEYS = frozenset({"type", "label", "id"})
+
+
+@dataclass(frozen=True)
+class KekState:
+    """Immutable KEK mode state. Enforces invariants structurally.
+
+    When present, the database is in KEK mode. ``None`` means inactive.
+    This replaces separate ``_kek``, ``_cr_salt``, and ``_kek_mode`` fields.
+
+    Attributes:
+        kek: Unwrapped Key Encryption Key (32 bytes)
+        cr_salt: Challenge-response salt used by enrolled devices
+    """
+
+    kek: SecureBytes
+    cr_salt: bytes
+
+    def zeroize(self) -> None:
+        """Zeroize the KEK from memory."""
+        self.kek.zeroize()
 
 
 @dataclass
@@ -133,6 +159,10 @@ class EnrolledDevice:
             raise ValueError("label is required")
         if not self.device_id:
             raise ValueError("device_id is required")
+        # Defense-in-depth: reject reserved keys in metadata
+        collision = _RESERVED_DEVICE_KEYS & self.metadata.keys()
+        if collision:
+            raise ValueError(f"Device metadata contains reserved keys: {collision}")
 
 
 def generate_kek() -> SecureBytes:
@@ -287,6 +317,9 @@ def serialize_device_entry(device: EnrolledDevice) -> bytes:
 
     Returns:
         Serialized bytes for storage in CustomData
+
+    Raises:
+        ValueError: If device metadata contains reserved keys
     """
     metadata = {
         "type": device.device_type,
@@ -328,10 +361,31 @@ def deserialize_device_entry(data: bytes) -> EnrolledDevice:
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise ValueError(f"Invalid device entry: bad JSON - {e}") from e
 
+    try:
+        device_type = metadata.pop("type")
+        label = metadata.pop("label")
+        device_id = metadata.pop("id")
+    except KeyError as e:
+        raise ValueError(f"Invalid device entry: missing required field {e}") from e
+
+    if (
+        not isinstance(device_type, str)
+        or not isinstance(label, str)
+        or not isinstance(device_id, str)
+    ):
+        raise ValueError(
+            "Invalid device entry: 'type', 'label', and 'id' must be strings"
+        )
+
+    if len(label) > MAX_LABEL_LENGTH:
+        raise ValueError(
+            f"Invalid device entry: label too long ({len(label)} > {MAX_LABEL_LENGTH})"
+        )
+
     return EnrolledDevice(
-        device_type=metadata.pop("type"),
-        label=metadata.pop("label"),
-        device_id=metadata.pop("id"),
+        device_type=device_type,
+        label=label,
+        device_id=device_id,
         metadata=metadata,
         wrapped_kek=wrapped_kek,
     )
@@ -347,6 +401,30 @@ def get_device_key_name(index: int) -> str:
         Key name like "KDBXTOOL_CR_DEVICE_0"
     """
     return CR_DEVICE_PREFIX + str(index)
+
+
+def detect_device_type(provider: object) -> str:
+    """Detect device type from a challenge-response provider.
+
+    Checks for an explicit ``device_type`` attribute first, then falls back
+    to a class-name heuristic for backward compatibility with third-party
+    providers that don't declare the attribute.
+
+    Args:
+        provider: Any object implementing ChallengeResponseProvider
+
+    Returns:
+        Device type string (e.g., "yubikey_hmac", "fido2")
+    """
+    explicit = getattr(provider, "device_type", None)
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    name = type(provider).__name__.lower()
+    if "yubikey" in name and "fido" not in name:
+        return "yubikey_hmac"
+    if "fido" in name:
+        return "fido2"
+    return name
 
 
 def parse_device_key_name(key: str) -> int | None:

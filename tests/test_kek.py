@@ -16,6 +16,7 @@ from kdbxtool.security.kek import (
     _hkdf_sha256,
     derive_final_key,
     deserialize_device_entry,
+    detect_device_type,
     generate_kek,
     generate_salt,
     get_device_key_name,
@@ -533,28 +534,28 @@ class TestSerializeDeserialize:
         """Test that deserialize fails when 'type' field is missing."""
         # JSON without 'type' field
         json_data = b'{"label":"Test","id":"123"}'
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="missing required field"):
             deserialize_device_entry(json_data + b"\x00" + b"w" * 64)
 
     def test_deserialize_missing_label_field_fails(self) -> None:
         """Test that deserialize fails when 'label' field is missing."""
         # JSON without 'label' field
         json_data = b'{"type":"test","id":"123"}'
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="missing required field"):
             deserialize_device_entry(json_data + b"\x00" + b"w" * 64)
 
     def test_deserialize_missing_id_field_fails(self) -> None:
         """Test that deserialize fails when 'id' field is missing."""
         # JSON without 'id' field
         json_data = b'{"type":"test","label":"Test"}'
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="missing required field"):
             deserialize_device_entry(json_data + b"\x00" + b"w" * 64)
 
     def test_deserialize_all_fields_missing_fails(self) -> None:
         """Test that deserialize fails when all required fields are missing."""
         # JSON with only extra metadata, no required fields
         json_data = b'{"extra":"data","version":1}'
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="missing required field"):
             deserialize_device_entry(json_data + b"\x00" + b"w" * 64)
 
     # H7: Tests for Unicode/binary edge cases
@@ -651,11 +652,13 @@ class TestSerializeDeserialize:
         assert restored.label == device.label
         assert "\x00" in restored.label
 
-    def test_very_long_label(self) -> None:
-        """Test serialize/deserialize with very long label."""
+    def test_max_length_label(self) -> None:
+        """Test serialize/deserialize with max-length label."""
+        from kdbxtool.security.kek import MAX_LABEL_LENGTH
+
         device = EnrolledDevice(
             device_type="test",
-            label="A" * 10000,  # 10KB label
+            label="A" * MAX_LABEL_LENGTH,
             device_id="test123",
             wrapped_kek=b"w" * 64,
         )
@@ -664,7 +667,21 @@ class TestSerializeDeserialize:
         restored = deserialize_device_entry(serialized)
 
         assert restored.label == device.label
-        assert len(restored.label) == 10000
+        assert len(restored.label) == MAX_LABEL_LENGTH
+
+    def test_overlength_label_rejected_on_deserialize(self) -> None:
+        """Test that deserialization rejects labels exceeding MAX_LABEL_LENGTH."""
+        import json
+
+        from kdbxtool.security.kek import MAX_LABEL_LENGTH
+
+        # Build raw serialized data with an over-length label
+        metadata = {"type": "test", "label": "A" * (MAX_LABEL_LENGTH + 1), "id": "test123"}
+        json_bytes = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
+        data = json_bytes + b"\x00" + b"w" * 64
+
+        with pytest.raises(ValueError, match="label too long"):
+            deserialize_device_entry(data)
 
     def test_empty_metadata_preserves_structure(self) -> None:
         """Test that empty metadata doesn't add extra fields to JSON."""
@@ -773,3 +790,76 @@ class TestMultiDeviceScenario:
         final2 = derive_final_key(base_master, unwrapped_kek.data)
 
         assert final.data == final2.data
+
+
+# --- T7b: detect_device_type() ---
+
+
+class TestDetectDeviceType:
+    def test_explicit_attr(self) -> None:
+        class P:
+            device_type = "tpm"
+
+        assert detect_device_type(P()) == "tpm"
+
+    def test_empty_attr_falls_back(self) -> None:
+        class P:
+            device_type = ""
+
+        assert detect_device_type(P()) == "p"
+
+    def test_none_attr_falls_back(self) -> None:
+        class P:
+            device_type = None
+
+        assert detect_device_type(P()) == "p"
+
+    def test_no_attr(self) -> None:
+        class Unknown:
+            pass
+
+        assert detect_device_type(Unknown()) == "unknown"
+
+    def test_yubikey_heuristic(self) -> None:
+        class MyYubiKeyThing:
+            pass
+
+        assert detect_device_type(MyYubiKeyThing()) == "yubikey_hmac"
+
+    def test_fido_heuristic(self) -> None:
+        class FidoDevice:
+            pass
+
+        assert detect_device_type(FidoDevice()) == "fido2"
+
+    def test_fido_beats_yubikey(self) -> None:
+        class YubiKeyFidoDevice:
+            pass
+
+        assert detect_device_type(YubiKeyFidoDevice()) == "fido2"
+
+    def test_explicit_attr_beats_heuristic(self) -> None:
+        class YubiKeyLike:
+            device_type = "custom"
+
+        assert detect_device_type(YubiKeyLike()) == "custom"
+
+
+# --- T7c: KekState immutability and zeroize ---
+
+
+class TestKekState:
+    def test_frozen_rejects_assignment(self) -> None:
+        from kdbxtool.security.kek import KekState
+
+        state = KekState(kek=SecureBytes(b"\x01" * 32), cr_salt=b"\x02" * 32)
+        with pytest.raises(AttributeError):
+            state.kek = SecureBytes(b"\x03" * 32)  # type: ignore[misc]
+
+    def test_zeroize_clears_kek(self) -> None:
+        from kdbxtool.security.kek import KekState
+
+        state = KekState(kek=SecureBytes(b"\x01" * 32), cr_salt=b"\x02" * 32)
+        state.zeroize()
+        with pytest.raises(ValueError, match="zeroized"):
+            _ = state.kek.data

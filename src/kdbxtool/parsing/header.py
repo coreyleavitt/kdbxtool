@@ -474,9 +474,20 @@ class KdbxHeader:
         Raises:
             UnsupportedVersionError: If not KDBX4 format
             KdfError: If Argon2 parameters are missing
+            CorruptedDataError: If KEK mode invariants are violated
         """
         if self.version != KdbxVersion.KDBX4:
             raise UnsupportedVersionError(self.version.value, 0)
+
+        # Validate KEK mode invariants before serialization
+        from kdbxtool.security.kek import CR_DEVICE_PREFIX, CR_SALT_KEY, CR_VERSION_KEY, VERSION_KEK
+
+        cr_version = self.public_custom_data.get(CR_VERSION_KEY)
+        if cr_version == VERSION_KEK:
+            if CR_SALT_KEY not in self.public_custom_data:
+                raise CorruptedDataError("KEK mode header missing CR salt")
+            if not any(k.startswith(CR_DEVICE_PREFIX) for k in self.public_custom_data):
+                raise CorruptedDataError("KEK mode header has no enrolled devices")
 
         ctx = BuildContext()
 

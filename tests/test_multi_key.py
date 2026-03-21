@@ -19,7 +19,7 @@ from kdbxtool import (
 )
 from kdbxtool.exceptions import ExperimentalWarning  # noqa: F401
 from kdbxtool.security.memory import SecureBytes
-from kdbxtool.testing import MockFido2, MockProvider, MockYubiKey
+from kdbxtool.testing import FailingProvider, MockFido2, MockProvider, MockYubiKey
 
 pytestmark = pytest.mark.filterwarnings("ignore::kdbxtool.exceptions.ExperimentalWarning")
 
@@ -289,8 +289,8 @@ class TestKekModeEnrollment:
 
         devices = db.list_enrolled_devices()
         assert len(devices) == 1
-        assert devices[0]["label"] == "Primary YubiKey"
-        assert "yubikey" in devices[0]["type"].lower()
+        assert devices[0].label == "Primary YubiKey"
+        assert "yubikey" in devices[0].device_type.lower()
 
     def test_enroll_multiple_devices(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test enrolling multiple devices."""
@@ -306,7 +306,7 @@ class TestKekModeEnrollment:
         assert db.enrolled_device_count == 2
 
         devices = db.list_enrolled_devices()
-        labels = [d["label"] for d in devices]
+        labels = [d.label for d in devices]
         assert "Primary" in labels
         assert "Backup" in labels
 
@@ -359,22 +359,22 @@ class TestKekModeEnrollment:
 
         assert db.enrolled_device_count == 2
 
-        db.revoke_device("Primary", remaining_providers={"Backup": provider2})
+        db.revoke_device("Primary", rotate_with={"Backup": provider2})
 
         assert db.enrolled_device_count == 1
         devices = db.list_enrolled_devices()
         assert len(devices) == 1
-        assert devices[0]["label"] == "Backup"
+        assert devices[0].label == "Backup"
 
     def test_revoke_last_device_fails(self, tmp_path: pytest.TempPathFactory) -> None:
-        """Test that revoking the last device fails."""
+        """Test that revoking the last device fails without rotate_with."""
         db = Database.create(password="password")
 
         provider = MockYubiKey.with_test_secret()
         db.enroll_device(provider, label="Primary", mode="kek")
 
-        with pytest.raises(ValueError, match="At least one remaining provider"):
-            db.revoke_device("Primary", remaining_providers={})
+        with pytest.raises(ValueError, match="Cannot revoke the last device"):
+            db.revoke_device("Primary")
 
     def test_revoke_unknown_device_fails(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that revoking unknown device fails."""
@@ -384,7 +384,7 @@ class TestKekModeEnrollment:
         db.enroll_device(provider, label="Primary", mode="kek")
 
         with pytest.raises(ValueError, match="not found"):
-            db.revoke_device("Unknown", remaining_providers={"Primary": provider})
+            db.revoke_device("Unknown", rotate_with={"Primary": provider})
 
     def test_enroll_on_compat_database_fails(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test that enrolling on a KeePassXC-compatible mode database fails."""
@@ -411,19 +411,12 @@ class TestKekModeEnrollment:
 
     def test_enrollment_atomic_on_provider_failure(self) -> None:
         """Test that enrollment is atomic - no state changes if provider fails."""
-
-        class FailingProvider:
-            """A provider that always fails."""
-
-            def challenge_response(self, challenge: bytes) -> SecureBytes:
-                raise ChallengeResponseError("Device not connected")
-
         db = Database.create(password="password")
 
         # Capture initial state
         assert not db.kek_mode
         assert db.enrolled_device_count == 0
-        initial_cr_salt = db._cr_salt  # Should be None
+        initial_kek_state = db._kek_state  # Should be None
 
         # Attempt enrollment with failing provider
         failing_provider = FailingProvider()
@@ -433,18 +426,10 @@ class TestKekModeEnrollment:
         # Verify no state was modified
         assert not db.kek_mode, "KEK mode should not be enabled after failed enrollment"
         assert db.enrolled_device_count == 0, "No device should be enrolled"
-        assert db._cr_salt == initial_cr_salt, "Salt should not be modified"
-        assert db._kek is None, "KEK should not be generated"
+        assert db._kek_state is initial_kek_state, "KEK state should not be modified"
 
     def test_enrollment_atomic_second_device_failure(self) -> None:
         """Test that adding a second device is atomic if it fails."""
-
-        class FailingProvider:
-            """A provider that always fails."""
-
-            def challenge_response(self, challenge: bytes) -> SecureBytes:
-                raise ChallengeResponseError("Device not connected")
-
         db = Database.create(password="password")
         first_provider = MockYubiKey.with_test_secret()
         db.enroll_device(first_provider, label="First Device", mode="kek")
@@ -452,8 +437,9 @@ class TestKekModeEnrollment:
         # Capture state after first enrollment
         assert db.kek_mode
         assert db.enrolled_device_count == 1
-        original_salt = db._cr_salt
-        original_kek = db._kek.data if db._kek else None
+        original_kek_state = db._kek_state
+        assert original_kek_state is not None
+        original_kek_data = original_kek_state.kek.data
 
         # Attempt to add second device with failing provider
         failing_provider = FailingProvider()
@@ -463,8 +449,8 @@ class TestKekModeEnrollment:
         # Verify state unchanged
         assert db.kek_mode, "KEK mode should still be enabled"
         assert db.enrolled_device_count == 1, "Should still have only 1 device"
-        assert db._cr_salt == original_salt, "Salt should be unchanged"
-        assert db._kek is not None and db._kek.data == original_kek, "KEK unchanged"
+        assert db._kek_state is original_kek_state, "KEK state should be unchanged"
+        assert db._kek_state.kek.data == original_kek_data, "KEK data unchanged"
 
 
 class TestKekModeRoundtrip:
@@ -638,7 +624,8 @@ class TestKekModeErrorPaths:
         except AuthenticationError as e:
             error_msg = str(e).lower()
             # Error should not reveal device count or specific device info
-            assert "1" not in error_msg or "device" not in error_msg
+            assert "1 device" not in error_msg
+            assert "device count" not in error_msg
             assert "primary" not in error_msg
             assert "yubikey" not in error_msg
 
@@ -658,7 +645,7 @@ class TestKekModeWithFido2:
 
         devices = db.list_enrolled_devices()
         assert len(devices) == 1
-        assert devices[0]["label"] == "FIDO2 Key"
+        assert devices[0].label == "FIDO2 Key"
 
     def test_fido2_roundtrip(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test FIDO2 device roundtrip in KEK mode."""
@@ -944,11 +931,12 @@ class TestDisableKekMode:
         # Open and clear credentials (simulating edge case)
         db2 = Database.open(db_path, password="password", challenge_response_provider=provider)
 
-        # Manually clear credentials to test the check
+        # Manually clear all credentials to test the check
         db2._password = None
         db2._keyfile_data = None
+        db2._transformed_key = None
 
-        with pytest.raises(DatabaseError, match="password or keyfile"):
+        with pytest.raises(DatabaseError, match="credentials"):
             db2.disable_kek_mode()
 
     def test_disable_kek_mode_not_in_kek_mode(self, tmp_path: pytest.TempPathFactory) -> None:
@@ -1172,8 +1160,7 @@ class TestRotateKek:
         # Simulate: device compromised, revoke and rotate
         db2 = Database.open(db_path, password="password", challenge_response_provider=backup)
 
-        db2.revoke_device("Compromised", remaining_providers={"Backup": backup})
-        db2.rotate_kek({"Backup": backup})
+        db2.revoke_device("Compromised", rotate_with={"Backup": backup})
         db2.save(db_path)
 
         # Compromised device cannot open (even if attacker has old backup)

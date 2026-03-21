@@ -461,8 +461,8 @@ class TestKekModeHardware:
 
         devices = db.list_enrolled_devices()
         assert len(devices) == 1
-        assert devices[0]["label"] == "My YubiKey"
-        assert devices[0]["type"] == "yubikey_hmac"
+        assert devices[0].label == "My YubiKey"
+        assert devices[0].device_type == "yubikey_hmac"
 
     def test_disable_kek_mode_migration(self, tmp_path: pytest.TempPathFactory) -> None:
         """Test migrating from KEK mode back to password-only."""
@@ -573,7 +573,7 @@ class TestKekModeHardware:
         )
         assert db3.enrolled_device_count == 1
         devices = db3.list_enrolled_devices()
-        assert devices[0]["label"] == "Backup"
+        assert devices[0].label == "Backup"
 
 
 @requires_yubikey

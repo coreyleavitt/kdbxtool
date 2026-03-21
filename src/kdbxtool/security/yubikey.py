@@ -310,6 +310,8 @@ class YubiKeyHmacSha1:
         YubiKeySlotError: If the slot is not configured for HMAC-SHA1
     """
 
+    device_type: str = "yubikey_hmac"
+
     # Sentinel value for default callback (allows distinguishing None from unset)
     _DEFAULT_CALLBACK: Callable[[], None] | None = DEFAULT_TOUCH_CALLBACK
 

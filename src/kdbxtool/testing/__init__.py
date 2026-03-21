@@ -101,6 +101,8 @@ class MockYubiKey(MockProvider):
         >>> db = Database.open("test.kdbx", password="pass", provider=provider)
     """
 
+    device_type: str = "yubikey_hmac"
+
     # Standard test secrets (20 bytes = HMAC-SHA1 key size)
     ZERO_SECRET = b"\x00" * 20
     TEST_SECRET = b"12345678901234567890"
@@ -153,6 +155,8 @@ class MockFido2(MockProvider):
         32
     """
 
+    device_type: str = "fido2"
+
     # Standard test secrets (32 bytes for FIDO2)
     ZERO_SECRET = b"\x00" * 32
     TEST_SECRET = b"12345678901234567890123456789012"
@@ -201,7 +205,26 @@ class MockFido2(MockProvider):
         return f"MockFido2(<{len(self._secret)} byte secret>)"
 
 
+class FailingProvider:
+    """A provider that always raises ChallengeResponseError.
+
+    Useful for testing atomic rollback in enrollment and rotation.
+
+    WARNING: This is for TESTING ONLY. See module docstring for details.
+    """
+
+    def challenge_response(self, challenge: bytes) -> SecureBytes:
+        """Always fails with ChallengeResponseError."""
+        from kdbxtool.exceptions import ChallengeResponseError
+
+        raise ChallengeResponseError("Device not connected")
+
+    def __repr__(self) -> str:
+        return "FailingProvider()"
+
+
 __all__ = [
+    "FailingProvider",
     "MockProvider",
     "MockYubiKey",
     "MockFido2",

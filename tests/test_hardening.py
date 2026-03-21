@@ -7,7 +7,7 @@ Covers:
 - Issue 4: revoke_device requires rotation
 - Issue 5: Unified enroll_device with mode selection
 - Issue 6: ExperimentalWarning on KEK enrollment
-- Issue 7: require_device_on_save
+- Issue 7: verify_device
 - Issue 8: Cross-application compatibility
 """
 
@@ -167,12 +167,12 @@ class TestRevokeDeviceRequiresRotation:
         db.enroll_device(p1, label="Primary", mode="kek")
         db.enroll_device(p2, label="Backup", mode="kek")
 
-        old_kek = db._kek.data
+        old_kek = db._kek_state.kek.data
 
-        db.revoke_device("Primary", remaining_providers={"Backup": p2})
+        db.revoke_device("Primary", rotate_with={"Backup": p2})
 
         # KEK should have changed (rotation occurred)
-        assert db._kek.data != old_kek
+        assert db._kek_state.kek.data != old_kek
         assert db.enrolled_device_count == 1
 
     def test_old_device_cannot_decrypt_after_revoke(self, tmp_path: Path) -> None:
@@ -190,7 +190,7 @@ class TestRevokeDeviceRequiresRotation:
 
         # Revoke and save
         db2 = Database.open(db_path, password="password", challenge_response_provider=keeper)
-        db2.revoke_device("Revoked", remaining_providers={"Keeper": keeper})
+        db2.revoke_device("Revoked", rotate_with={"Keeper": keeper})
         db2.save(db_path)
 
         # Old device cannot open
@@ -202,7 +202,7 @@ class TestRevokeDeviceRequiresRotation:
         assert db3.find_entries(title="Secret")[0].password == "value"
 
     def test_revoke_rejects_revoked_label_in_remaining(self) -> None:
-        """Cannot include the revoked device in remaining_providers."""
+        """Cannot include the revoked device in rotate_with."""
         db = Database.create(password="password")
         p1 = MockYubiKey.with_secret(b"secret_one_here__20!")
         p2 = MockYubiKey.with_secret(b"secret_two_here__20!")
@@ -211,16 +211,16 @@ class TestRevokeDeviceRequiresRotation:
         db.enroll_device(p2, label="B", mode="kek")
 
         with pytest.raises(ValueError, match="Cannot include revoked device"):
-            db.revoke_device("A", remaining_providers={"A": p1})
+            db.revoke_device("A", rotate_with={"A": p1})
 
-    def test_revoke_empty_remaining_fails(self) -> None:
-        """Revoke with no remaining providers fails."""
+    def test_revoke_last_device_without_rotation_fails(self) -> None:
+        """Revoking last device without rotate_with fails."""
         db = Database.create(password="password")
         p1 = MockYubiKey.with_test_secret()
         db.enroll_device(p1, label="Primary", mode="kek")
 
-        with pytest.raises(ValueError, match="At least one remaining provider"):
-            db.revoke_device("Primary", remaining_providers={})
+        with pytest.raises(ValueError, match="Cannot revoke the last device"):
+            db.revoke_device("Primary")
 
 
 # --- Issue 5: Unified enroll_device with mode selection ---
@@ -368,7 +368,7 @@ class TestExperimentalWarning:
         assert issubclass(ExperimentalWarning, UserWarning)
 
 
-# --- Issue 7: require_device_on_save ---
+# --- Issue 7: verify_device ---
 
 
 class TestRequireDeviceOnSave:
@@ -383,7 +383,7 @@ class TestRequireDeviceOnSave:
 
         db_path = tmp_path / "verify.kdbx"
         # Should not raise
-        db.save(db_path, require_device_on_save=provider)
+        db.save(db_path, verify_device=provider)
 
         # Verify data was saved
         db2 = Database.open(db_path, password="password", challenge_response_provider=provider)
@@ -399,10 +399,10 @@ class TestRequireDeviceOnSave:
 
         db_path = tmp_path / "verify_fail.kdbx"
         with pytest.raises(AuthenticationError, match="verification failed"):
-            db.save(db_path, require_device_on_save=wrong)
+            db.save(db_path, verify_device=wrong)
 
     def test_no_verification_without_flag(self, tmp_path: Path) -> None:
-        """Save works without require_device_on_save (default behavior)."""
+        """Save works without verify_device (default behavior)."""
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
         db.enroll_device(provider, label="Primary", mode="kek")
@@ -411,30 +411,100 @@ class TestRequireDeviceOnSave:
         # Should not raise
         db.save(db_path)
 
-    def test_ignored_for_non_kek_mode(self, tmp_path: Path) -> None:
-        """require_device_on_save is ignored for non-KEK mode databases."""
+    def test_raises_for_non_kek_mode(self, tmp_path: Path) -> None:
+        """verify_device raises ValueError for non-KEK mode databases."""
         db = Database.create(password="password")
         provider = MockYubiKey.with_test_secret()
 
         db_path = tmp_path / "not_kek.kdbx"
-        # Should not raise even though provider is given -- not in KEK mode
-        db.save(db_path, require_device_on_save=provider)
+        with pytest.raises(ValueError, match="only supported for KEK mode"):
+            db.save(db_path, verify_device=provider)
 
-    def test_to_bytes_also_verifies(self) -> None:
-        """to_bytes also supports require_device_on_save."""
+    def test_to_bytes_does_not_accept_verify_device(self) -> None:
+        """to_bytes is pure serialization and does not accept verify_device."""
         db = Database.create(password="password")
         correct = MockYubiKey.with_test_secret()
-        wrong = MockYubiKey.with_secret(b"wrong_secret_here!!!")
 
         db.enroll_device(correct, label="Primary", mode="kek")
 
-        # Correct device
-        data = db.to_bytes(require_device_on_save=correct)
+        # to_bytes should work without verify_device
+        data = db.to_bytes()
         assert len(data) > 0
 
-        # Wrong device
-        with pytest.raises(AuthenticationError, match="verification failed"):
-            db.to_bytes(require_device_on_save=wrong)
+        # to_bytes should reject verify_device kwarg
+        with pytest.raises(TypeError):
+            db.to_bytes(verify_device=correct)  # type: ignore[call-arg]
+
+
+# --- T7a: challenge_response_mode property ---
+
+
+class TestChallengeResponseMode:
+    def test_mode_none_default(self) -> None:
+        db = Database.create(password="password")
+        assert db.challenge_response_mode == "none"
+
+    def test_mode_compat(self) -> None:
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary", mode="compat")
+        assert db.challenge_response_mode == "compat"
+
+    def test_mode_kek(self) -> None:
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary", mode="kek")
+        assert db.challenge_response_mode == "kek"
+
+    def test_mode_none_after_disable(self) -> None:
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary", mode="kek")
+        assert db.challenge_response_mode == "kek"
+        db.disable_kek_mode()
+        assert db.challenge_response_mode == "none"
+
+
+# --- T7d: revoke_device() without rotation ---
+
+
+class TestRevokeWithoutRotation:
+    def test_revoke_without_rotation_removes_device_preserves_kek(self) -> None:
+        db = Database.create(password="password")
+        p1 = MockYubiKey.with_secret(b"secret_one_here__20!")
+        p2 = MockYubiKey.with_secret(b"secret_two_here__20!")
+        db.enroll_device(p1, label="Primary", mode="kek")
+        db.enroll_device(p2, label="Backup", mode="kek")
+
+        original_kek = db._kek_state.kek.data
+
+        db.revoke_device("Primary")  # no rotate_with
+
+        # Device removed
+        assert db.enrolled_device_count == 1
+        assert db.list_enrolled_devices()[0].label == "Backup"
+        # KEK NOT rotated
+        assert db._kek_state.kek.data == original_kek
+
+    def test_revoke_without_rotation_roundtrip(self, tmp_path: Path) -> None:
+        """Revoke without rotation, save, reopen with remaining device."""
+        db = Database.create(password="password")
+        p1 = MockYubiKey.with_secret(b"secret_one_here__20!")
+        p2 = MockYubiKey.with_secret(b"secret_two_here__20!")
+        db.enroll_device(p1, label="Primary", mode="kek")
+        db.enroll_device(p2, label="Backup", mode="kek")
+        db.root_group.create_entry(title="Secret", password="value")
+
+        db.revoke_device("Primary")
+
+        db_path = tmp_path / "revoke_no_rotate.kdbx"
+        db.save(db_path)
+
+        db2 = Database.open(
+            db_path, password="password", challenge_response_provider=p2
+        )
+        assert db2.enrolled_device_count == 1
+        assert db2.find_entries(title="Secret")[0].password == "value"
 
 
 # --- Issue 8: Cross-application compatibility ---
@@ -538,3 +608,121 @@ class TestCrossApplicationCompatibility:
         # No KDBXTOOL_* keys in header
         for key in db2._header.public_custom_data:
             assert not key.startswith("KDBXTOOL_"), f"Unexpected key: {key}"
+
+
+# --- Additional hardening tests ---
+
+
+class TestRotationRollback:
+    """Verify rotate_kek rollback on failure."""
+
+    def test_rotation_rollback_on_failure(self) -> None:
+        """Enroll 2 devices, rotate with a FailingProvider for one, verify rollback."""
+        from kdbxtool.exceptions import ChallengeResponseError
+        from kdbxtool.testing import FailingProvider
+
+        db = Database.create(password="password")
+        p1 = MockYubiKey.with_secret(b"secret_one_here__20!")
+        p2 = MockYubiKey.with_secret(b"secret_two_here__20!")
+
+        db.enroll_device(p1, label="Device1", mode="kek")
+        db.enroll_device(p2, label="Device2", mode="kek")
+
+        original_kek_data = db._kek_state.kek.data
+        original_device_count = db.enrolled_device_count
+        original_devices = [d.label for d in db.list_enrolled_devices()]
+
+        # Attempt rotation where second device fails
+        failing = FailingProvider()
+        with pytest.raises(ChallengeResponseError):
+            db.rotate_kek({"Device1": p1, "Failing": failing})
+
+        # Verify original state unchanged
+        assert db._kek_state.kek.data == original_kek_data
+        assert db.enrolled_device_count == original_device_count
+        assert sorted(d.label for d in db.list_enrolled_devices()) == sorted(original_devices)
+
+
+class TestReloadKekMode:
+    """Verify reload() preserves KEK mode state."""
+
+    def test_reload_preserves_kek_mode(self, tmp_path: Path) -> None:
+        """Create KEK DB, save, reload(), verify kek_mode + data accessible."""
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary", mode="kek")
+        db.root_group.create_entry(title="Secret", password="value")
+
+        db_path = tmp_path / "reload_kek.kdbx"
+        db.save(db_path)
+
+        # Open and reload
+        db2 = Database.open(db_path, password="password", challenge_response_provider=provider)
+        assert db2.kek_mode
+        db2.reload()
+
+        assert db2.kek_mode
+        assert db2.enrolled_device_count == 1
+        assert db2.find_entries(title="Secret")[0].password == "value"
+
+        # Can save again after reload
+        db2.save(db_path)
+        db3 = Database.open(db_path, password="password", challenge_response_provider=provider)
+        assert db3.kek_mode
+        assert db3.find_entries(title="Secret")[0].password == "value"
+
+
+class TestCorruptedEntryResilience:
+    """Verify corrupted device entries are handled gracefully."""
+
+    def test_list_enrolled_devices_skips_corrupt(self) -> None:
+        """Inject corrupt device entry alongside valid one, verify skip."""
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Valid", mode="kek")
+
+        # Inject a corrupted device entry
+        db._header.public_custom_data["KDBXTOOL_CR_DEVICE_99"] = b"corrupt data"
+
+        devices = db.list_enrolled_devices()
+        assert len(devices) == 1
+        assert devices[0].label == "Valid"
+
+    def test_unwrap_kek_tries_all_entries(self) -> None:
+        """Inject corrupt entry before valid one, verify unwrap still works."""
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Valid", mode="kek")
+
+        # Inject corrupt entry with a lower index (tried first)
+        from kdbxtool.security.kek import get_device_key_name
+
+        # Move valid entry to index 1 and put corrupt at index 0
+        valid_data = db._header.public_custom_data[get_device_key_name(0)]
+        db._header.public_custom_data[get_device_key_name(1)] = valid_data
+        db._header.public_custom_data[get_device_key_name(0)] = b"corrupt"
+
+        # Should still unwrap from the valid entry
+        cr_salt = db._kek_state.cr_salt
+        response = provider.challenge_response(cr_salt)
+        kek = Database._unwrap_kek_from_devices(db._header, response.data)
+        assert len(kek.data) == 32
+
+
+class TestKekModeRoundtripNoSeedRegen:
+    """Verify C1 fix: KEK DB with regenerate_seeds=False works."""
+
+    def test_roundtrip_without_seed_regen(self, tmp_path: Path) -> None:
+        """Create KEK DB, save with regenerate_seeds=False, reopen."""
+        db = Database.create(password="password")
+        provider = MockYubiKey.with_test_secret()
+        db.enroll_device(provider, label="Primary", mode="kek")
+        db.root_group.create_entry(title="Secret", password="value")
+
+        db_path = tmp_path / "no_regen.kdbx"
+        db.save(db_path, regenerate_seeds=False)
+
+        # Reopen -- this would fail with double-KEK before the C1 fix
+        db2 = Database.open(db_path, password="password", challenge_response_provider=provider)
+        assert db2.kek_mode
+        assert db2.find_entries(title="Secret")[0].password == "value"

@@ -120,7 +120,8 @@ class Kdbx4Reader:
             transformed_key: Optional precomputed transformed key (skips KDF)
             yubikey_hmac_response: Optional 20-byte YubiKey HMAC-SHA1 response (compat mode)
             kek: Optional 32-byte Key Encryption Key (KEK mode). If provided,
-                the final master key is XOR'd with KEK after KDF derivation.
+                the final master key is derived via HKDF-SHA256(salt=base_key, ikm=kek)
+                after KDF derivation.
 
         Returns:
             DecryptedPayload with header, inner header, XML, and transformed_key
@@ -167,10 +168,17 @@ class Kdbx4Reader:
             master_key = self._derive_master_key(header, composite_key)
             master_key_bytes = master_key.data
 
+        # Capture pre-KEK transformed key for caching. The cached key must NOT
+        # include the KEK derivation, otherwise reopening with a cached key would
+        # apply KEK twice (double-KEK bug).
+        pre_kek_transformed_key = master_key_bytes
+
         # Apply KEK if provided (KEK mode for multi-device support)
+        final_key_sb: SecureBytes | None = None
         if kek is not None:
             logger.debug("Applying KEK to master key")
-            master_key_bytes = derive_final_key(master_key_bytes, kek).data
+            final_key_sb = derive_final_key(master_key_bytes, kek)
+            master_key_bytes = final_key_sb.data
 
         # Derive keys for HMAC and encryption (returns SecureBytes)
         hmac_key, cipher_key = self._derive_keys(master_key_bytes, header.master_seed)
@@ -210,12 +218,14 @@ class Kdbx4Reader:
                 header=header,
                 inner_header=inner_header,
                 xml_data=xml_data,
-                transformed_key=master_key_bytes,
+                transformed_key=pre_kek_transformed_key,
             )
         finally:
             # Zeroize derived keys after use
             hmac_key.zeroize()
             cipher_key.zeroize()
+            if final_key_sb is not None:
+                final_key_sb.zeroize()
 
     def _derive_master_key(self, header: KdbxHeader, composite_key: SecureBytes) -> SecureBytes:
         """Derive master key using the KDF specified in header."""
@@ -447,13 +457,17 @@ class Kdbx4Writer:
             master_key = self._derive_master_key(header, composite_key)
             master_key_bytes = master_key.data
 
-        # Apply KEK if provided (KEK mode for multi-device support)
+        # Apply KEK if provided (KEK mode for multi-device support).
+        # Use a separate variable so master_key_bytes stays pristine (pre-KEK).
+        final_key = master_key_bytes
+        final_key_sb: SecureBytes | None = None
         if kek is not None:
             logger.debug("Applying KEK to master key")
-            master_key_bytes = derive_final_key(master_key_bytes, kek).data
+            final_key_sb = derive_final_key(master_key_bytes, kek)
+            final_key = final_key_sb.data
 
         # Derive keys for HMAC and encryption (returns SecureBytes)
-        hmac_key, cipher_key = self._derive_keys(master_key_bytes, header.master_seed)
+        hmac_key, cipher_key = self._derive_keys(final_key, header.master_seed)
 
         try:
             # Build inner header
@@ -491,6 +505,8 @@ class Kdbx4Writer:
             # Zeroize derived keys after use
             hmac_key.zeroize()
             cipher_key.zeroize()
+            if final_key_sb is not None:
+                final_key_sb.zeroize()
 
     def _derive_master_key(self, header: KdbxHeader, composite_key: SecureBytes) -> SecureBytes:
         """Derive master key using the KDF specified in header."""

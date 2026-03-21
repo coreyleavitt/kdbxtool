@@ -245,6 +245,8 @@ class Fido2HmacSecret(ABC):
         rp_id: Relying party ID
     """
 
+    device_type: str = "fido2"
+
     def __init__(
         self,
         credential_id: bytes,

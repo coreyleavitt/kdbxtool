@@ -8,6 +8,7 @@ A modern, secure Python library for reading and writing KeePass KDBX databases.
 
 getting-started
 advanced
+hardware-keys
 migration
 api
 ```
@@ -28,7 +29,8 @@ with Database.open("vault.kdbx", password="secret") as db:
 - **Type-safe**: Full type hints, Python 3.12+
 - **KDBX4 focused**: Modern KeePass format with Argon2d KDF
 - **Multiple ciphers**: AES-256-CBC, ChaCha20, Twofish (optional)
-- **YubiKey support**: HMAC-SHA1 challenge-response authentication
+- **Hardware key support**: YubiKey HMAC-SHA1, FIDO2 hmac-secret
+- **Multi-device**: Enroll multiple hardware keys as backups (KEK mode)
 
 ## Installation
 

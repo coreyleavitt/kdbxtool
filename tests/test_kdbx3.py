@@ -12,8 +12,6 @@ import pytest
 
 from kdbxtool import Database
 from kdbxtool.exceptions import Kdbx3UpgradeRequired
-from kdbxtool.parsing import KdbxVersion
-
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 TEST3_KDBX = FIXTURES_DIR / "test3.kdbx"

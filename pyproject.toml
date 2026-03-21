@@ -34,6 +34,8 @@ dependencies = [
 [project.optional-dependencies]
 twofish = ["oxifish>=0.1.1"]
 yubikey = ["yubikey-manager>=5.0.0"]
+fido2 = ["fido2>=1.1"]
+all = ["oxifish>=0.1.1", "yubikey-manager>=5.0.0", "fido2>=1.1"]
 
 [dependency-groups]
 dev = [
@@ -64,6 +66,26 @@ python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = [
+    "ykman.*",
+    "yubikit.*",
+    "fido2.*",
+    "oxifish",
+]
+ignore_missing_imports = true
+
+# Modules that wrap optional deps with untyped or Any-typed APIs
+[[tool.mypy.overrides]]
+module = [
+    "kdbxtool.security.crypto",
+    "kdbxtool.security.fido2",
+    "kdbxtool.security.yubikey",
+]
+disallow_subclassing_any = false
+disallow_untyped_calls = false
+warn_return_any = false
 
 [tool.ruff]
 target-version = "py312"

@@ -16,7 +16,7 @@ class TestEntryMoveTo:
         db = Database.create(password="test")
         # Create groups
         group_a = db.root_group.create_subgroup("Group A")
-        group_b = db.root_group.create_subgroup("Group B")
+        db.root_group.create_subgroup("Group B")
         # Create entries
         group_a.create_entry(title="Entry 1", username="user1")
         group_a.create_entry(title="Entry 2", username="user2")

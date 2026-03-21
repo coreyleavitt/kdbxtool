@@ -18,7 +18,7 @@ class TestSeedRegeneration:
         initial_stream_key = db._inner_header.random_stream_key
 
         # Save the database
-        data1 = db.to_bytes()
+        db.to_bytes()
 
         # All seeds should be different after save
         assert db._header.master_seed != initial_master_seed
@@ -32,7 +32,7 @@ class TestSeedRegeneration:
         db.root_group.create_entry(title="Test")
 
         # First save
-        data1 = db.to_bytes()
+        db.to_bytes()
         seeds_after_first = (
             db._header.master_seed,
             db._header.encryption_iv,
@@ -41,7 +41,7 @@ class TestSeedRegeneration:
         )
 
         # Second save
-        data2 = db.to_bytes()
+        db.to_bytes()
         seeds_after_second = (
             db._header.master_seed,
             db._header.encryption_iv,
@@ -79,7 +79,7 @@ class TestSeedRegeneration:
     def test_file_still_readable_after_seed_regeneration(self) -> None:
         """Test that file is still readable after seed regeneration."""
         db = Database.create(password="test")
-        entry = db.root_group.create_entry(title="Test Entry", password="secret")
+        db.root_group.create_entry(title="Test Entry", password="secret")
 
         # Save and reload
         data = db.to_bytes()
@@ -95,7 +95,7 @@ class TestSeedRegeneration:
         db = Database.create(password="test")
         db.root_group.create_entry(title="Test", password="pass1")
 
-        for i in range(3):
+        for _i in range(3):
             # Save and reload
             data = db.to_bytes()
             db = Database.open_bytes(data, password="test")

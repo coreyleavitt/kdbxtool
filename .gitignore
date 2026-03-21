@@ -85,3 +85,4 @@ notes/
 # Sphinx documentation build
 docs/_build/
 docs/_generated/
+PR75_REVIEW_FINDINGS.md

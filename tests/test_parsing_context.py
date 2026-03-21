@@ -87,10 +87,8 @@ class TestParseContext:
     def test_scope_context_manager(self) -> None:
         """Test scope context manager for error paths."""
         ctx = ParseContext(b"\x01")
-        with ctx.scope("outer"):
-            with ctx.scope("inner"):
-                with pytest.raises(CorruptedDataError) as exc_info:
-                    ctx.read(10, "field")
+        with ctx.scope("outer"), ctx.scope("inner"), pytest.raises(CorruptedDataError) as exc_info:
+            ctx.read(10, "field")
         assert "outer/inner/field" in str(exc_info.value)
 
     def test_scope_cleanup_on_exception(self) -> None:

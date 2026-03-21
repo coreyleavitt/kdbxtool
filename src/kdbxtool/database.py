@@ -17,12 +17,13 @@ import hashlib
 import logging
 import os
 import uuid as uuid_module
+import warnings
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 if TYPE_CHECKING:
@@ -33,7 +34,9 @@ from defusedxml import ElementTree as DefusedET
 
 from .exceptions import (
     AuthenticationError,
+    CorruptedDataError,
     DatabaseError,
+    ExperimentalWarning,
     InvalidXmlError,
     Kdbx3UpgradeRequired,
     MissingCredentialsError,
@@ -44,9 +47,27 @@ from .models.entry import AutoType, BinaryRef, StringField
 from .parsing import CompressionType, KdbxHeader, KdbxVersion
 from .parsing.kdbx3 import read_kdbx3
 from .parsing.kdbx4 import InnerHeader, read_kdbx4, write_kdbx4
-from .security import AesKdfConfig, Argon2Config, Cipher, KdfType
-from .security import yubikey as yubikey_module
-from .security.yubikey import YubiKeyConfig, compute_challenge_response
+from .security import AesKdfConfig, Argon2Config, Cipher, KdfType, constant_time_compare
+from .security.challenge_response import ChallengeResponseProvider
+from .security.kek import (
+    CR_DEVICE_PREFIX,
+    CR_SALT_KEY,
+    CR_VERSION_KEY,
+    MAX_LABEL_LENGTH,
+    VERSION_COMPAT,
+    VERSION_KEK,
+    EnrolledDevice,
+    KekState,
+    deserialize_device_entry,
+    detect_device_type,
+    generate_kek,
+    generate_salt,
+    get_device_key_name,
+    serialize_device_entry,
+    unwrap_kek,
+    wrap_kek,
+)
+from .security.memory import SecureBytes
 
 logger = logging.getLogger(__name__)
 
@@ -231,8 +252,10 @@ class Database:
         self._keyfile_data: bytes | None = None
         self._transformed_key: bytes | None = None
         self._filepath: Path | None = None
-        self._yubikey_slot: int | None = None
-        self._yubikey_serial: int | None = None
+        self._challenge_response_provider: ChallengeResponseProvider | None = None
+        # KEK mode state (for multi-device challenge-response support)
+        # None = not in KEK mode; KekState = active KEK mode
+        self._kek_state: KekState | None = None
         # Set database reference on all entries and groups
         self._set_database_references(root_group)
 
@@ -286,6 +309,10 @@ class Database:
             except TypeError:
                 pass
             self._transformed_key = None
+        # Clear KEK state (most sensitive in KEK mode - can decrypt regardless of device)
+        if self._kek_state is not None:
+            self._kek_state.zeroize()
+            self._kek_state = None
 
     def dump(self) -> str:
         """Return a human-readable summary of the database for debugging.
@@ -401,6 +428,559 @@ class Database:
         """Get the file path (if opened from file)."""
         return self._filepath
 
+    # --- KEK Mode (Multi-device Challenge-Response) ---
+
+    @property
+    def challenge_response_mode(self) -> Literal["none", "compat", "kek"]:
+        """Current challenge-response mode of the database.
+
+        Returns:
+            ``"kek"`` if KEK wrapping is active, ``"compat"`` if KeePassXC-
+            compatible CR is active, ``"none"`` otherwise.
+        """
+        if self._kek_state is not None:
+            return "kek"
+        if (
+            self._header is not None
+            and self._header.public_custom_data.get(CR_VERSION_KEY) == VERSION_COMPAT
+        ):
+            return "compat"
+        return "none"
+
+    @property
+    def kek_mode(self) -> bool:
+        """Whether this database uses KEK wrapping for challenge-response.
+
+        KEK mode enables multiple hardware devices (YubiKeys, FIDO2 keys, etc.)
+        to unlock the same database. Each enrolled device wraps the same KEK
+        with its unique challenge-response output.
+
+        Returns:
+            True if database uses KEK mode, False for KeePassXC-compatible mode or no CR
+        """
+        return self._kek_state is not None
+
+    @property
+    def enrolled_device_count(self) -> int:
+        """Number of enrolled challenge-response devices.
+
+        Returns:
+            Count of enrolled devices, or 0 if not in KEK mode
+        """
+        if self._kek_state is None or self._header is None:
+            return 0
+        count = 0
+        for key in self._header.public_custom_data:
+            if key.startswith(CR_DEVICE_PREFIX):
+                count += 1
+        return count
+
+    def list_enrolled_devices(self) -> list[EnrolledDevice]:
+        """List all enrolled challenge-response devices.
+
+        Returns a list of :class:`EnrolledDevice` instances with
+        ``wrapped_kek`` cleared (set to ``b""``) for safety -- the
+        wrapped KEK is an internal detail and should not leak through
+        the public API.
+
+        Note:
+            Device metadata is stored in the unencrypted header for protocol
+            negotiation. Anyone with file access can enumerate enrolled devices
+            without knowing the password. This is a known limitation -- see
+            :mod:`kdbxtool.security.kek` module documentation for details.
+
+        Example:
+            >>> for device in db.list_enrolled_devices():
+            ...     print(f"{device.label}: {device.device_type}")
+            Primary YubiKey: yubikey_hmac
+            Backup FIDO2: fido2
+        """
+        if self._kek_state is None or self._header is None:
+            return []
+
+        devices: list[EnrolledDevice] = []
+        for key, value in self._header.public_custom_data.items():
+            if key.startswith(CR_DEVICE_PREFIX):
+                try:
+                    device = deserialize_device_entry(value)
+                    devices.append(replace(device, wrapped_kek=b""))
+                except ValueError:
+                    logger.warning("Failed to deserialize device entry: %s", key)
+        return devices
+
+    def enroll_device(
+        self,
+        provider: ChallengeResponseProvider,
+        label: str,
+        *,
+        mode: Literal["auto", "compat", "kek"] = "auto",
+        device_type: str | None = None,
+        device_id: str | None = None,
+    ) -> None:
+        """Enroll a challenge-response device for this database.
+
+        This is the single entry point for all hardware key setup. The ``mode``
+        parameter selects between:
+
+        - **compat**: KeePassXC-compatible mode. The CR response is mixed into
+          the composite key at save time. Single YubiKey HMAC-SHA1 only.
+        - **kek** (experimental): Multi-device KEK wrapping mode. Each device
+          wraps the same KEK. Supports FIDO2, multiple devices, and credential
+          changes without re-enrollment. Not compatible with KeePassXC.
+        - **auto** (default): Selects compat for a single YubiKey HMAC-SHA1
+          with no prior enrollments, kek otherwise.
+
+        Args:
+            provider: The device provider (YubiKeyHmacSha1, Fido2HmacSecret, etc.)
+            label: User-friendly label (e.g., "Primary YubiKey"). Must be
+                non-empty and at most 256 characters.
+            mode: Enrollment mode ("auto", "compat", or "kek").
+            device_type: Override auto-detected type (defaults to class name)
+            device_id: Override auto-detected ID (defaults to "default")
+
+        Raises:
+            ValueError: If label is empty, too long, already exists, or mode
+                is invalid for the provider/database state
+            DatabaseError: If database has no header (not initialized)
+
+        Example:
+            >>> from kdbxtool.testing import MockYubiKey
+            >>> db = Database.create(password="secret")
+            >>> provider = MockYubiKey.with_test_secret()
+            >>> db.enroll_device(provider, label="Primary YubiKey")
+            >>> db.save("vault.kdbx")
+        """
+        if self._header is None:
+            raise DatabaseError("Cannot enroll device: database not initialized")
+
+        # Validate label
+        if not label or not label.strip():
+            raise ValueError("Device label cannot be empty")
+        if len(label) > MAX_LABEL_LENGTH:
+            raise ValueError(
+                f"Device label too long: {len(label)} characters (max {MAX_LABEL_LENGTH})"
+            )
+
+        # Detect device type from provider
+        if device_type is None:
+            device_type = detect_device_type(provider)
+
+        if device_id is None:
+            device_id = "default"
+
+        is_fido2 = device_type == "fido2"
+
+        # Resolve auto mode
+        resolved_mode = mode
+        if mode == "auto":
+            if is_fido2 or self.kek_mode or self.enrolled_device_count > 0:
+                resolved_mode = "kek"
+            else:
+                # Check for existing compat-mode CR
+                cr_version = self._header.public_custom_data.get(CR_VERSION_KEY)
+                if cr_version == VERSION_COMPAT:
+                    # Already in compat mode, cannot add second device
+                    raise ValueError(
+                        "Database already uses KeePassXC-compatible challenge-response. "
+                        "Cannot add another device in compat mode. "
+                        "Use mode='kek' to switch to multi-device mode on a new database."
+                    )
+                if self._challenge_response_provider is not None and not self.kek_mode:
+                    raise ValueError(
+                        "Database was opened with KeePassXC-compatible mode. "
+                        "Cannot add device. Create a new database to use KEK mode."
+                    )
+                # Single YubiKey HMAC-SHA1, no prior enrollments -> compat
+                resolved_mode = "compat"
+
+        # Validate mode constraints
+        if resolved_mode == "compat":
+            if is_fido2:
+                raise ValueError(
+                    "FIDO2 devices are not supported in compat mode. "
+                    "Use mode='kek' for FIDO2 devices."
+                )
+            if self.kek_mode or self.enrolled_device_count > 0:
+                raise ValueError(
+                    "Cannot use compat mode: devices already enrolled in KEK mode. "
+                    "Use mode='kek' to add another device."
+                )
+            cr_version = self._header.public_custom_data.get(CR_VERSION_KEY)
+            if cr_version == VERSION_COMPAT:
+                raise ValueError(
+                    "Database already uses KeePassXC-compatible challenge-response. "
+                    "Only one device is supported in compat mode."
+                )
+            if self._challenge_response_provider is not None and not self.kek_mode:
+                raise ValueError(
+                    "Database was opened with KeePassXC-compatible mode. "
+                    "Only one device is supported in compat mode."
+                )
+
+        logger.info(
+            "enroll_device: mode='%s' resolved to '%s' (provider=%s, enrolled=%d)",
+            mode,
+            resolved_mode,
+            type(provider).__name__,
+            self.enrolled_device_count,
+        )
+
+        if resolved_mode == "compat":
+            self._enroll_compat(provider, label)
+        else:
+            self._enroll_kek(provider, label, device_type=device_type, device_id=device_id)
+
+    def _enroll_compat(
+        self,
+        provider: ChallengeResponseProvider,
+        label: str,
+    ) -> None:
+        """Enroll a single device in KeePassXC-compatible mode.
+
+        In compat mode the CR response is mixed into the composite key at
+        save time (via the challenge_response_provider parameter on save()).
+        The provider is stored for automatic use on subsequent saves.
+        """
+        if self._header is None:  # pragma: no cover -- caller validates
+            raise DatabaseError("Cannot enroll device: database not initialized")
+
+        # Test the provider before modifying state
+        provider.challenge_response(self._header.kdf_salt)
+
+        # Store the provider for use at save time
+        self._challenge_response_provider = provider
+
+        # Mark as compat in public_custom_data so open() knows the mode
+        self._header.public_custom_data[CR_VERSION_KEY] = VERSION_COMPAT
+
+        logger.info("Enrolled device '%s' in KeePassXC-compatible mode", label)
+
+    def _enroll_kek(
+        self,
+        provider: ChallengeResponseProvider,
+        label: str,
+        *,
+        device_type: str,
+        device_id: str,
+    ) -> None:
+        """Enroll a device in KEK wrapping mode."""
+        if self._header is None:  # pragma: no cover -- caller validates
+            raise DatabaseError("Cannot enroll device: database not initialized")
+
+        # Check if database was opened with compat mode -- cannot layer KEK on top
+        cr_version = self._header.public_custom_data.get(CR_VERSION_KEY)
+        if cr_version == VERSION_COMPAT:
+            raise DatabaseError(
+                "Cannot enroll device: database uses KeePassXC-compatible challenge-response. "
+                "This mode does not support multi-device enrollment. "
+                "Create a new database with enroll_device(mode='kek') to use KEK mode."
+            )
+        if self._challenge_response_provider is not None and not self.kek_mode:
+            raise DatabaseError(
+                "Cannot enroll device: database was opened with KeePassXC-compatible mode. "
+                "This mode does not support multi-device enrollment. "
+                "To migrate, create a new database and enroll devices using enroll_device()."
+            )
+
+        # Check for duplicate label
+        for existing in self.list_enrolled_devices():
+            if existing.label == label:
+                raise ValueError(f"Device with label '{label}' already enrolled")
+
+        # Use existing salt or generate a temporary one for testing
+        # We don't store the salt until after the provider is verified
+        existing_salt = self._kek_state.cr_salt if self._kek_state is not None else None
+        salt = existing_salt if existing_salt is not None else generate_salt()
+
+        # Test the provider BEFORE modifying any state
+        # This ensures enrollment is atomic - either fully succeeds or no state changes
+        response = provider.challenge_response(salt)
+
+        # Provider succeeded - now we can safely modify state
+        # First enrollment: generate new KEK
+        if self._kek_state is None:
+            warnings.warn(
+                "KEK mode is experimental. This database will NOT be compatible "
+                "with KeePassXC, KeePassDX, or other KeePass applications. "
+                "Only kdbxtool can open KEK mode databases. "
+                "Filter this warning with warnings.filterwarnings('ignore', "
+                "category=ExperimentalWarning).",
+                ExperimentalWarning,
+                stacklevel=3,
+            )
+            self._kek_state = KekState(kek=generate_kek(), cr_salt=salt)
+            logger.info("Generated new KEK, converting database to KEK mode")
+
+        wrapped = wrap_kek(self._kek_state.kek.data, response.data)
+
+        # Create device entry
+        device = EnrolledDevice(
+            device_type=device_type,
+            label=label,
+            device_id=device_id,
+            metadata={},
+            wrapped_kek=wrapped,
+        )
+
+        # Find next available device index
+        index = 0
+        while get_device_key_name(index) in self._header.public_custom_data:
+            index += 1
+
+        # Store in header CustomData
+        self._header.public_custom_data[CR_VERSION_KEY] = VERSION_KEK
+        self._header.public_custom_data[CR_SALT_KEY] = self._kek_state.cr_salt
+        self._header.public_custom_data[get_device_key_name(index)] = serialize_device_entry(device)
+
+        logger.info("Enrolled device '%s' (type: %s) at index %d", label, device_type, index)
+
+    def revoke_device(
+        self,
+        label: str,
+        *,
+        rotate_with: dict[str, ChallengeResponseProvider] | None = None,
+    ) -> None:
+        """Remove an enrolled device from the database.
+
+        If ``rotate_with`` is provided, the KEK is immediately rotated and
+        re-wrapped for the given providers (recommended for security). If
+        omitted, only the device entry is removed and a warning is logged --
+        old file copies remain decryptable by the revoked device until
+        ``rotate_kek()`` is called separately.
+
+        Args:
+            label: Label of the device to remove
+            rotate_with: Optional dict mapping label -> provider for all
+                devices that should remain after revocation. If provided,
+                ``rotate_kek()`` is called automatically after removal.
+
+        Raises:
+            ValueError: If label not found, device is the last one without
+                rotate_with, or rotate_with includes the revoked device
+            DatabaseError: If database has no header or not in KEK mode
+        """
+        if self._header is None:
+            raise DatabaseError("Cannot revoke device: database not initialized")
+
+        if self._kek_state is None:
+            raise ValueError("Database is not in KEK mode - no devices to revoke")
+
+        if rotate_with is not None and label in rotate_with:
+            raise ValueError(f"Cannot include revoked device '{label}' in rotate_with")
+
+        # Verify the device exists and find its key
+        device_key_to_remove: str | None = None
+        for key, value in self._header.public_custom_data.items():
+            if key.startswith(CR_DEVICE_PREFIX):
+                try:
+                    device = deserialize_device_entry(value)
+                    if device.label == label:
+                        device_key_to_remove = key
+                        break
+                except ValueError:
+                    continue
+
+        if device_key_to_remove is None:
+            raise ValueError(f"Device with label '{label}' not found")
+
+        # Cannot remove the last device without providing rotate_with
+        # (which effectively means at least one remaining device)
+        remaining_count = sum(
+            1 for k in self._header.public_custom_data if k.startswith(CR_DEVICE_PREFIX)
+        )
+        if remaining_count <= 1 and rotate_with is None:
+            raise ValueError(
+                "Cannot revoke the last device without rotate_with. "
+                "Use disable_kek_mode() to remove all hardware protection."
+            )
+
+        if rotate_with is not None:
+            # Rotate KEK with remaining providers (atomic).
+            # rotate_kek() rebuilds all device entries from scratch using only
+            # the labels in `rotate_with`, so the revoked device is already
+            # excluded. Deleting before rotation would be dangerous: if
+            # rotate_kek() fails, the entry is gone but the KEK wasn't rotated.
+            self.rotate_kek(rotate_with)
+            logger.info("Revoked device '%s' and rotated KEK", label)
+        else:
+            # No rotation -- just remove the entry
+            del self._header.public_custom_data[device_key_to_remove]
+            logger.warning(
+                "Device '%s' revoked without KEK rotation. Old file copies may "
+                "still be decryptable by the revoked device. Call rotate_kek() "
+                "for forward secrecy.",
+                label,
+            )
+
+    def disable_kek_mode(self) -> None:
+        """Remove KEK mode protection, returning to password-only.
+
+        This removes all challenge-response protection from the database.
+        After calling this method, the database will only be protected by
+        password and/or keyfile. This allows migration to KeePassXC or other
+        KeePass applications that don't support KEK mode.
+
+        WARNING: This removes all hardware device protection. The database
+        will only be as secure as your password after this operation.
+
+        Raises:
+            DatabaseError: If database has no header, is not in KEK mode,
+                          or no password/keyfile is set
+
+        Example:
+            >>> db = Database.open("vault.kdbx", password="secret",
+            ...                    challenge_response_provider=provider)
+            >>> db.disable_kek_mode()
+            >>> db.save("vault_no_kek.kdbx")  # Now compatible with KeePassXC
+        """
+        if self._header is None:
+            raise DatabaseError("Cannot disable KEK mode: database not initialized")
+
+        if self._kek_state is None:
+            raise DatabaseError("Database is not in KEK mode")
+
+        # Ensure password or keyfile is set - can't have unprotected database
+        if self._password is None and self._keyfile_data is None and self._transformed_key is None:
+            raise DatabaseError(
+                "Cannot disable KEK mode without credentials set. Call set_credentials() first."
+            )
+
+        # Warn user about security implications
+        warnings.warn(
+            "Disabling KEK mode removes all hardware device protection. "
+            "The database will only be protected by password/keyfile. "
+            "This action cannot be undone without re-enrolling devices.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+        # Remove all device entries
+        device_keys = [
+            key for key in self._header.public_custom_data if key.startswith(CR_DEVICE_PREFIX)
+        ]
+        for key in device_keys:
+            del self._header.public_custom_data[key]
+
+        # Remove KEK mode markers
+        if CR_VERSION_KEY in self._header.public_custom_data:
+            del self._header.public_custom_data[CR_VERSION_KEY]
+        if CR_SALT_KEY in self._header.public_custom_data:
+            del self._header.public_custom_data[CR_SALT_KEY]
+
+        # Clear internal KEK state
+        self._kek_state.zeroize()
+        self._kek_state = None
+        # Clear challenge-response provider to prevent compat mode key derivation
+        self._challenge_response_provider = None
+
+        logger.info("Disabled KEK mode - database now uses password/keyfile only")
+
+    def rotate_kek(
+        self,
+        providers: dict[str, ChallengeResponseProvider],
+    ) -> None:
+        """Rotate the KEK, re-wrapping for all enrolled devices.
+
+        Generates a new KEK and salt, then re-wraps for each provided device.
+        Devices not in ``providers`` are effectively removed. Use this after
+        revoking a device to ensure forward secrecy.
+
+        Args:
+            providers: Dict mapping device label to provider. Must include
+                      all devices you want to keep enrolled.
+
+        Raises:
+            DatabaseError: If database is not in KEK mode
+            ValueError: If providers dict is empty
+
+        Example:
+            >>> db.rotate_kek({
+            ...     "Backup YubiKey": backup_provider,
+            ...     "FIDO2 Key": fido2_provider,
+            ... })
+            >>> db.save()
+        """
+        if self._header is None:
+            raise DatabaseError("Cannot rotate KEK: database not initialized")
+
+        if self._kek_state is None:
+            raise DatabaseError("Database is not in KEK mode")
+
+        if not providers:
+            raise ValueError("At least one provider required for KEK rotation")
+
+        # Capture existing device metadata for preservation (M6: preserve device_id)
+        existing_devices: dict[str, EnrolledDevice] = {}
+        for key, value in self._header.public_custom_data.items():
+            if key.startswith(CR_DEVICE_PREFIX):
+                try:
+                    device = deserialize_device_entry(value)
+                    existing_devices[device.label] = device
+                except ValueError:
+                    continue
+
+        # Generate new salt and KEK
+        new_salt = generate_salt()
+        new_kek = generate_kek()
+        committed = False
+
+        try:
+            # Build new device entries in temporary structure
+            # This ensures atomicity - we only commit changes after ALL devices succeed
+            new_device_entries: list[tuple[str, bytes]] = []
+
+            for index, (label, provider) in enumerate(providers.items()):
+                # Get CR response with new salt - this can fail (device not present, etc.)
+                response = provider.challenge_response(new_salt)
+
+                # Wrap new KEK
+                wrapped = wrap_kek(new_kek.data, response.data)
+
+                # Detect device type
+                device_type = detect_device_type(provider)
+
+                # Preserve device_id and metadata from existing entries
+                existing = existing_devices.get(label)
+                device = EnrolledDevice(
+                    device_type=device_type,
+                    label=label,
+                    device_id=existing.device_id if existing else "default",
+                    metadata=existing.metadata if existing else {},
+                    wrapped_kek=wrapped,
+                )
+
+                device_key = get_device_key_name(index)
+                new_device_entries.append((device_key, serialize_device_entry(device)))
+
+            # All devices enrolled successfully - now commit changes atomically
+            # Remove all existing device entries
+            device_keys = [
+                key for key in self._header.public_custom_data if key.startswith(CR_DEVICE_PREFIX)
+            ]
+            for key in device_keys:
+                del self._header.public_custom_data[key]
+
+            # Add new device entries
+            for device_key, serialized in new_device_entries:
+                self._header.public_custom_data[device_key] = serialized
+
+            # Update salt and KEK state
+            self._header.public_custom_data[CR_SALT_KEY] = new_salt
+            old_state = self._kek_state
+            self._kek_state = KekState(kek=new_kek, cr_salt=new_salt)
+            committed = True
+            if old_state is not None:
+                old_state.zeroize()
+
+            logger.info(
+                "Rotated KEK with %d devices. Old backups not decryptable by revoked devices.",
+                len(providers),
+            )
+        finally:
+            # Zeroize new_kek if we failed before committing
+            if not committed:
+                new_kek.zeroize()
+
     # --- Opening databases ---
 
     @classmethod
@@ -409,8 +989,7 @@ class Database:
         filepath: str | Path,
         password: str | None = None,
         keyfile: str | Path | None = None,
-        yubikey_slot: int | None = None,
-        yubikey_serial: int | None = None,
+        challenge_response_provider: ChallengeResponseProvider | None = None,
     ) -> Database:
         """Open an existing KDBX database.
 
@@ -418,12 +997,10 @@ class Database:
             filepath: Path to the .kdbx file
             password: Database password
             keyfile: Path to keyfile (optional)
-            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
-                If provided, the database's KDF salt is used as challenge and
-                the 20-byte HMAC-SHA1 response is incorporated into key derivation.
-                Requires yubikey-manager package: pip install kdbxtool[yubikey]
-            yubikey_serial: Serial number of specific YubiKey to use when multiple
-                devices are connected. Use list_yubikeys() to discover serials.
+            challenge_response_provider: Challenge-response provider (YubiKeyHmacSha1,
+                Fido2HmacSecret, or MockYubiKey for testing). If provided, the
+                database's KDF salt is used as challenge and the response is
+                incorporated into key derivation.
 
         Returns:
             Database instance
@@ -431,7 +1008,7 @@ class Database:
         Raises:
             FileNotFoundError: If file doesn't exist
             ValueError: If credentials are wrong or file is corrupted
-            YubiKeyError: If YubiKey operation fails
+            ChallengeResponseError: If challenge-response operation fails
         """
         logger.info("Opening database: %s", filepath)
         filepath = Path(filepath)
@@ -452,8 +1029,7 @@ class Database:
             password=password,
             keyfile_data=keyfile_data,
             filepath=filepath,
-            yubikey_slot=yubikey_slot,
-            yubikey_serial=yubikey_serial,
+            challenge_response_provider=challenge_response_provider,
         )
 
     @classmethod
@@ -461,8 +1037,7 @@ class Database:
         cls,
         filepath: str | Path,
         keyfile: str | Path | None = None,
-        yubikey_slot: int | None = None,
-        yubikey_serial: int | None = None,
+        challenge_response_provider: ChallengeResponseProvider | None = None,
         prompt: str = "Password: ",
         max_attempts: int = 3,
     ) -> Database:
@@ -477,8 +1052,8 @@ class Database:
         Args:
             filepath: Path to the .kdbx file
             keyfile: Path to keyfile (optional)
-            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional)
-            yubikey_serial: Serial number of specific YubiKey to use
+            challenge_response_provider: Challenge-response provider (YubiKeyHmacSha1,
+                Fido2HmacSecret, or MockYubiKey for testing)
             prompt: Custom prompt string (default: "Password: ")
             max_attempts: Maximum password attempts before raising (default: 3)
 
@@ -488,7 +1063,7 @@ class Database:
         Raises:
             FileNotFoundError: If file or keyfile doesn't exist
             AuthenticationError: If max_attempts exceeded with wrong password
-            YubiKeyError: If YubiKey operation fails
+            ChallengeResponseError: If challenge-response operation fails
 
         Example:
             >>> db = Database.open_interactive("vault.kdbx")
@@ -505,8 +1080,7 @@ class Database:
                     filepath,
                     password=password,
                     keyfile=keyfile,
-                    yubikey_slot=yubikey_slot,
-                    yubikey_serial=yubikey_serial,
+                    challenge_response_provider=challenge_response_provider,
                 )
             except AuthenticationError:
                 if attempt < max_attempts - 1:
@@ -526,8 +1100,7 @@ class Database:
         keyfile_data: bytes | None = None,
         filepath: Path | None = None,
         transformed_key: bytes | None = None,
-        yubikey_slot: int | None = None,
-        yubikey_serial: int | None = None,
+        challenge_response_provider: ChallengeResponseProvider | None = None,
     ) -> Database:
         """Open a KDBX database from bytes.
 
@@ -540,34 +1113,20 @@ class Database:
             keyfile_data: Keyfile contents (optional)
             filepath: Original file path (for save)
             transformed_key: Precomputed transformed key (skips KDF, faster opens)
-            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
-                If provided, the database's KDF salt is used as challenge and
-                the 20-byte HMAC-SHA1 response is incorporated into key derivation.
-                Requires yubikey-manager package: pip install kdbxtool[yubikey]
-            yubikey_serial: Serial number of specific YubiKey to use when multiple
-                devices are connected. Use list_yubikeys() to discover serials.
+            challenge_response_provider: Challenge-response provider (YubiKeyHmacSha1,
+                Fido2HmacSecret, or MockYubiKey for testing). If provided, the
+                database's KDF salt is used as challenge and the response is
+                incorporated into key derivation.
 
         Returns:
             Database instance
 
         Raises:
-            YubiKeyError: If YubiKey operation fails
+            ChallengeResponseError: If challenge-response operation fails
         """
         # Detect version from header (parse just enough to get version)
         header, _ = KdbxHeader.parse(data)
         logger.debug("KDBX version: %s", header.version.name)
-
-        # Get YubiKey response if slot specified
-        # KeePassXC uses the KDF salt as the challenge, not master_seed
-        yubikey_response: bytes | None = None
-        if yubikey_slot is not None:
-            if not yubikey_module.YUBIKEY_AVAILABLE:
-                from .exceptions import YubiKeyNotAvailableError
-
-                raise YubiKeyNotAvailableError()
-            config = YubiKeyConfig(slot=yubikey_slot, serial=yubikey_serial)
-            response = compute_challenge_response(header.kdf_salt, config)
-            yubikey_response = response.data
 
         # Decrypt the file using appropriate reader
         is_kdbx3 = header.version == KdbxVersion.KDBX3
@@ -581,11 +1140,11 @@ class Database:
                 UserWarning,
                 stacklevel=3,
             )
-            # KDBX3 doesn't support YubiKey CR in the same way
+            # KDBX3 doesn't support challenge-response in the same way
             # (KeeChallenge used a sidecar XML file, not integrated)
-            if yubikey_slot is not None:
+            if challenge_response_provider is not None:
                 raise DatabaseError(
-                    "YubiKey challenge-response is not supported for KDBX3 databases. "
+                    "Challenge-response is not supported for KDBX3 databases. "
                     "Upgrade to KDBX4 first."
                 )
             payload = read_kdbx3(
@@ -594,14 +1153,60 @@ class Database:
                 keyfile_data=keyfile_data,
                 transformed_key=transformed_key,
             )
+            kek_state: KekState | None = None
         else:
-            payload = read_kdbx4(
-                data,
-                password=password,
-                keyfile_data=keyfile_data,
-                transformed_key=transformed_key,
-                yubikey_response=yubikey_response,
-            )
+            # Check for KEK mode vs KeePassXC-compatible mode
+            cr_version = header.public_custom_data.get(CR_VERSION_KEY)
+
+            # Check for unknown future versions
+            if cr_version is not None and cr_version not in (VERSION_COMPAT, VERSION_KEK):
+                version_str = cr_version.hex() if isinstance(cr_version, bytes) else str(cr_version)
+                raise DatabaseError(
+                    f"Unknown challenge-response version: {version_str}. "
+                    "This database may require a newer version of kdbxtool."
+                )
+
+            is_kek_mode = cr_version == VERSION_KEK
+
+            if is_kek_mode:
+                # KEK mode: unwrap KEK from enrolled device
+                logger.debug("Database uses KEK mode for challenge-response")
+                cr_salt = header.public_custom_data.get(CR_SALT_KEY)
+                if cr_salt is None:
+                    raise DatabaseError("KEK mode database missing CR salt")
+
+                if challenge_response_provider is None:
+                    raise DatabaseError(
+                        "Database requires challenge-response device but none provided"
+                    )
+
+                # Get CR response and try to unwrap KEK (returns SecureBytes)
+                response = challenge_response_provider.challenge_response(cr_salt)
+                kek_secure = cls._unwrap_kek_from_devices(header, response.data)
+
+                payload = read_kdbx4(
+                    data,
+                    password=password,
+                    keyfile_data=keyfile_data,
+                    transformed_key=transformed_key,
+                    kek=kek_secure.data,
+                )
+                kek_state = KekState(kek=kek_secure, cr_salt=cr_salt)
+            else:
+                # KeePassXC-compatible mode: CR response mixed into composite key
+                challenge_response_data: bytes | None = None
+                if challenge_response_provider is not None:
+                    response = challenge_response_provider.challenge_response(header.kdf_salt)
+                    challenge_response_data = response.data
+
+                payload = read_kdbx4(
+                    data,
+                    password=password,
+                    keyfile_data=keyfile_data,
+                    transformed_key=transformed_key,
+                    yubikey_hmac_response=challenge_response_data,
+                )
+                kek_state = None
 
         # Parse XML into models (with protected value decryption)
         root_group, settings, binaries = cls._parse_xml(payload.xml_data, payload.inner_header)
@@ -618,8 +1223,8 @@ class Database:
         db._transformed_key = payload.transformed_key
         db._filepath = filepath
         db._opened_as_kdbx3 = is_kdbx3
-        db._yubikey_slot = yubikey_slot
-        db._yubikey_serial = yubikey_serial
+        db._challenge_response_provider = challenge_response_provider
+        db._kek_state = kek_state
 
         logger.info("Database opened successfully")
         logger.debug(
@@ -629,6 +1234,66 @@ class Database:
         )
 
         return db
+
+    @classmethod
+    def _unwrap_kek_from_devices(cls, header: KdbxHeader, cr_response: bytes) -> SecureBytes:
+        """Try to unwrap KEK using CR response against enrolled devices.
+
+        Args:
+            header: KDBX header with enrolled device entries
+            cr_response: Challenge-response output from provider
+
+        Returns:
+            Unwrapped 32-byte KEK wrapped in SecureBytes for memory zeroization
+
+        Raises:
+            AuthenticationError: If CR response doesn't match any enrolled device
+            CorruptedDataError: If device entries are malformed
+        """
+        devices_tried = 0
+        corrupted_entries = 0
+
+        # Try each enrolled device
+        for key, value in header.public_custom_data.items():
+            if not key.startswith(CR_DEVICE_PREFIX):
+                continue
+
+            # First, try to deserialize the device entry
+            try:
+                device = deserialize_device_entry(value)
+            except ValueError as e:
+                # Corrupted device entry - log and continue to try others
+                logger.warning("Corrupted device entry %s: %s", key, e)
+                corrupted_entries += 1
+                continue
+
+            devices_tried += 1
+
+            # Now try to unwrap the KEK with this device
+            try:
+                kek = unwrap_kek(device.wrapped_kek, cr_response)
+                logger.debug("Successfully unwrapped KEK using device: %s", device.label)
+                return kek  # Return SecureBytes, caller responsible for zeroization
+            except ValueError:
+                # Wrong device (authentication failed), try next
+                logger.debug("Device '%s' did not match, trying next", device.label)
+                continue
+
+        # No enrolled device matched - provide informative error
+        # Note: We intentionally don't reveal device counts to avoid information leakage
+        if devices_tried == 0:
+            if corrupted_entries > 0:
+                raise CorruptedDataError(
+                    "All enrolled device entries are corrupted. The database may be damaged."
+                )
+            raise AuthenticationError(
+                "No enrolled devices found in database. "
+                "The database may not be in KEK mode or is corrupted."
+            )
+
+        raise AuthenticationError(
+            "Challenge-response device not recognized. Make sure you're using an enrolled device."
+        )
 
     # --- Creating databases ---
 
@@ -756,30 +1421,28 @@ class Database:
         target_cipher = cipher if cipher is not None else self._header.cipher
 
         if kdf_config is not None:
+            # Mutate existing header in place to preserve fields like
+            # public_custom_data (which contains enrolled device entries).
+            # Reconstructing a new KdbxHeader would silently drop any field
+            # not explicitly copied, destroying KEK enrollment state.
+            self._header.version = KdbxVersion.KDBX4
+            self._header.cipher = target_cipher
             if isinstance(kdf_config, Argon2Config):
-                self._header = KdbxHeader(
-                    version=KdbxVersion.KDBX4,
-                    cipher=target_cipher,
-                    compression=self._header.compression,
-                    master_seed=self._header.master_seed,
-                    encryption_iv=self._header.encryption_iv,
-                    kdf_type=kdf_config.variant,
-                    kdf_salt=kdf_config.salt,
-                    argon2_memory_kib=kdf_config.memory_kib,
-                    argon2_iterations=kdf_config.iterations,
-                    argon2_parallelism=kdf_config.parallelism,
-                )
+                self._header.kdf_type = kdf_config.variant
+                self._header.kdf_salt = kdf_config.salt
+                self._header.argon2_memory_kib = kdf_config.memory_kib
+                self._header.argon2_iterations = kdf_config.iterations
+                self._header.argon2_parallelism = kdf_config.parallelism
+                # Clear inapplicable AES-KDF fields
+                self._header.aes_kdf_rounds = None
             elif isinstance(kdf_config, AesKdfConfig):
-                self._header = KdbxHeader(
-                    version=KdbxVersion.KDBX4,
-                    cipher=target_cipher,
-                    compression=self._header.compression,
-                    master_seed=self._header.master_seed,
-                    encryption_iv=self._header.encryption_iv,
-                    kdf_type=KdfType.AES_KDF,
-                    kdf_salt=kdf_config.salt,
-                    aes_kdf_rounds=kdf_config.rounds,
-                )
+                self._header.kdf_type = KdfType.AES_KDF
+                self._header.kdf_salt = kdf_config.salt
+                self._header.aes_kdf_rounds = kdf_config.rounds
+                # Clear inapplicable Argon2 fields
+                self._header.argon2_memory_kib = None
+                self._header.argon2_iterations = None
+                self._header.argon2_parallelism = None
             # KDF change invalidates cached transformed key
             self._transformed_key = None
         elif cipher is not None and cipher != self._header.cipher:
@@ -787,6 +1450,45 @@ class Database:
             self._header.cipher = target_cipher
             self._header.encryption_iv = os.urandom(target_cipher.iv_size)
             self._transformed_key = None
+
+    def _verify_device_on_save(self, provider: ChallengeResponseProvider) -> None:
+        """Verify device presence by challenging and comparing unwrapped KEK.
+
+        This is a policy check, not a cryptographic change. It ensures the
+        device is physically present before allowing a save.
+
+        Args:
+            provider: The device to verify
+
+        Raises:
+            DatabaseError: If not in KEK mode or KEK not available
+            AuthenticationError: If device verification fails
+        """
+        if self._kek_state is None or self._header is None:
+            raise DatabaseError("Device verification requires KEK mode with a cached KEK")
+
+        response = provider.challenge_response(self._kek_state.cr_salt)
+        unwrapped: SecureBytes | None = None
+        try:
+            # Try to unwrap KEK from any enrolled device using this provider's response
+            try:
+                unwrapped = self._unwrap_kek_from_devices(self._header, response.data)
+            except AuthenticationError:
+                raise AuthenticationError(
+                    "Device verification failed: device could not unwrap KEK"
+                ) from None
+
+            # Constant-time compare unwrapped KEK against cached KEK
+            if not constant_time_compare(unwrapped.data, self._kek_state.kek.data):
+                raise AuthenticationError(
+                    "Device verification failed: unwrapped KEK does not match"
+                )
+
+            logger.debug("Device verification succeeded")
+        finally:
+            response.zeroize()
+            if unwrapped is not None:
+                unwrapped.zeroize()
 
     def save(
         self,
@@ -796,8 +1498,8 @@ class Database:
         regenerate_seeds: bool = True,
         kdf_config: KdfConfig | None = None,
         cipher: Cipher | None = None,
-        yubikey_slot: int | None = None,
-        yubikey_serial: int | None = None,
+        challenge_response_provider: ChallengeResponseProvider | None = None,
+        verify_device: ChallengeResponseProvider | None = None,
     ) -> None:
         """Save the database to a file.
 
@@ -822,17 +1524,21 @@ class Database:
                 - Cipher.CHACHA20 (modern, faster in software)
                 - Cipher.TWOFISH256_CBC (requires oxifish package)
                 If not specified, preserves existing cipher.
-            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
-                If provided (or if database was opened with yubikey_slot), the new
-                KDF salt is used as challenge and the response is incorporated
-                into key derivation. Requires yubikey-manager package.
-            yubikey_serial: Serial number of specific YubiKey to use when multiple
-                devices are connected. Use list_yubikeys() to discover serials.
+            challenge_response_provider: Challenge-response provider (YubiKeyHmacSha1,
+                Fido2HmacSecret, or MockYubiKey for testing). If provided (or if
+                database was opened with a provider), the new KDF salt is used as
+                challenge and the response is incorporated into key derivation.
+            verify_device: Optional provider for KEK mode device verification
+                before saving. Challenges the device, unwraps the KEK, and
+                verifies it matches the cached KEK using constant-time comparison.
+                This is a policy check, not a cryptographic change.
 
         Raises:
             DatabaseError: If no filepath specified and database wasn't opened from file
             Kdbx3UpgradeRequired: If saving KDBX3 to original file without allow_upgrade=True
-            YubiKeyError: If YubiKey operation fails
+            ChallengeResponseError: If challenge-response operation fails
+            AuthenticationError: If verify_device verification fails
+            ValueError: If verify_device is used on a non-KEK database
         """
         logger.info("Saving database to: %s", filepath or self._filepath)
 
@@ -847,27 +1553,31 @@ class Database:
         if was_kdbx3 and not save_to_new_file and not allow_upgrade:
             raise Kdbx3UpgradeRequired()
 
-        # Use provided yubikey params, or fall back to stored ones
-        effective_yubikey_slot = yubikey_slot if yubikey_slot is not None else self._yubikey_slot
-        effective_yubikey_serial = (
-            yubikey_serial if yubikey_serial is not None else self._yubikey_serial
+        # Verify device presence before save if requested (KEK mode only)
+        if verify_device is not None:
+            if not self.kek_mode:
+                raise ValueError("verify_device is only supported for KEK mode databases")
+            self._verify_device_on_save(verify_device)
+
+        # Determine effective provider: explicit > stored
+        effective_provider = (
+            challenge_response_provider
+            if challenge_response_provider is not None
+            else self._challenge_response_provider
         )
 
         data = self.to_bytes(
             regenerate_seeds=regenerate_seeds,
             kdf_config=kdf_config,
             cipher=cipher,
-            yubikey_slot=effective_yubikey_slot,
-            yubikey_serial=effective_yubikey_serial,
+            challenge_response_provider=effective_provider,
         )
         self._filepath.write_bytes(data)
         logger.debug("Database saved successfully")
 
-        # Update stored yubikey params if changed
-        if yubikey_slot is not None:
-            self._yubikey_slot = yubikey_slot
-        if yubikey_serial is not None:
-            self._yubikey_serial = yubikey_serial
+        # Update stored provider if changed
+        if challenge_response_provider is not None:
+            self._challenge_response_provider = challenge_response_provider
 
         # After KDBX3 upgrade, reload to get proper KDBX4 state (including transformed_key)
         if was_kdbx3:
@@ -900,6 +1610,7 @@ class Database:
             password=self._password,
             keyfile_data=self._keyfile_data,
             filepath=self._filepath,
+            challenge_response_provider=self._challenge_response_provider,
         )
 
         # Copy all state from reloaded database
@@ -910,6 +1621,8 @@ class Database:
         self._binaries = reloaded._binaries
         self._transformed_key = reloaded._transformed_key
         self._opened_as_kdbx3 = reloaded._opened_as_kdbx3
+        self._kek_state = reloaded._kek_state
+        self._challenge_response_provider = reloaded._challenge_response_provider
 
     def xml(self, *, pretty_print: bool = False) -> bytes:
         """Export database XML payload.
@@ -979,13 +1692,15 @@ class Database:
         regenerate_seeds: bool = True,
         kdf_config: KdfConfig | None = None,
         cipher: Cipher | None = None,
-        yubikey_slot: int | None = None,
-        yubikey_serial: int | None = None,
+        challenge_response_provider: ChallengeResponseProvider | None = None,
     ) -> bytes:
         """Serialize the database to KDBX4 format.
 
         KDBX3 databases are automatically upgraded to KDBX4 on save.
         This includes converting to the specified KDF and ChaCha20 protected stream.
+
+        Device verification (``verify_device``) is a policy concern handled by
+        ``save()``, not by ``to_bytes()`` which is pure serialization.
 
         Args:
             regenerate_seeds: If True (default), regenerate all cryptographic seeds
@@ -1003,25 +1718,23 @@ class Database:
                 - Cipher.CHACHA20 (modern, faster in software)
                 - Cipher.TWOFISH256_CBC (requires oxifish package)
                 If not specified, preserves existing cipher.
-            yubikey_slot: YubiKey slot for challenge-response (1 or 2, optional).
-                If provided, the (new) KDF salt is used as challenge and the
-                20-byte HMAC-SHA1 response is incorporated into key derivation.
-                Requires yubikey-manager package: pip install kdbxtool[yubikey]
-            yubikey_serial: Serial number of specific YubiKey to use when multiple
-                devices are connected. Use list_yubikeys() to discover serials.
+            challenge_response_provider: Challenge-response provider (YubiKeyHmacSha1,
+                Fido2HmacSecret, or MockYubiKey for testing). If provided, the (new)
+                KDF salt is used as challenge and the response is incorporated into
+                key derivation.
 
         Returns:
             KDBX4 file contents as bytes
 
         Raises:
             MissingCredentialsError: If no credentials are set
-            YubiKeyError: If YubiKey operation fails
+            ChallengeResponseError: If challenge-response operation fails
         """
-        # Need either credentials, a transformed key, or YubiKey
+        # Need either credentials, a transformed key, or challenge-response provider
         has_credentials = self._password is not None or self._keyfile_data is not None
         has_transformed_key = self._transformed_key is not None
-        has_yubikey = yubikey_slot is not None
-        if not has_credentials and not has_transformed_key and not has_yubikey:
+        has_provider = challenge_response_provider is not None
+        if not has_credentials and not has_transformed_key and not has_provider:
             raise MissingCredentialsError()
 
         if self._header is None:
@@ -1039,28 +1752,34 @@ class Database:
         elif kdf_config is not None or cipher is not None:
             self._apply_encryption_config(kdf_config, cipher=cipher)
 
-        # Regenerate all cryptographic seeds to prevent precomputation attacks.
+        # Regenerate cryptographic seeds to prevent precomputation attacks.
         # This ensures each save produces a file encrypted with fresh randomness.
         # See: https://github.com/libkeepass/pykeepass/issues/219
         if regenerate_seeds:
             self._header.master_seed = os.urandom(32)
             self._header.encryption_iv = os.urandom(self._header.cipher.iv_size)
+            # Always regenerate kdf_salt. In KEK mode, enrolled devices use cr_salt
+            # (stored in public_custom_data), not kdf_salt. The password/keyfile
+            # credentials are cached (self._password, self._keyfile_data) so KDF
+            # re-derivation works with the new salt.
             self._header.kdf_salt = os.urandom(32)
             self._inner_header.random_stream_key = os.urandom(64)
-            # Cached transformed_key is now invalid (salt changed)
+            # Cached transformed_key is now invalid (seeds changed)
             self._transformed_key = None
 
-        # Get YubiKey response if slot specified
-        # KeePassXC uses the KDF salt as the challenge, not master_seed
-        yubikey_response: bytes | None = None
-        if yubikey_slot is not None:
-            if not yubikey_module.YUBIKEY_AVAILABLE:
-                from .exceptions import YubiKeyNotAvailableError
+        # Determine key derivation mode and get necessary data
+        kek_data: bytes | None = None
+        challenge_response_data: bytes | None = None
 
-                raise YubiKeyNotAvailableError()
-            config = YubiKeyConfig(slot=yubikey_slot, serial=yubikey_serial)
-            response = compute_challenge_response(self._header.kdf_salt, config)
-            yubikey_response = response.data
+        if self._kek_state is not None:
+            # KEK mode: pass KEK to write_kdbx4, don't mix CR into composite key
+            kek_data = self._kek_state.kek.data
+            logger.debug("Using KEK mode for encryption")
+        elif challenge_response_provider is not None:
+            # KeePassXC-compatible mode: CR response mixed into composite key
+            response = challenge_response_provider.challenge_response(self._header.kdf_salt)
+            challenge_response_data = response.data
+            logger.debug("Using KeePassXC-compatible CR mode for encryption")
 
         # Sync binaries to inner header (preserve protection flags where possible)
         existing_binaries = self._inner_header.binaries
@@ -1087,7 +1806,8 @@ class Database:
             password=self._password,
             keyfile_data=self._keyfile_data,
             transformed_key=self._transformed_key,
-            yubikey_response=yubikey_response,
+            yubikey_hmac_response=challenge_response_data,
+            kek=kek_data,
         )
 
     def set_credentials(

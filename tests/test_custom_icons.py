@@ -7,7 +7,6 @@ import pytest
 from kdbxtool import Database
 from kdbxtool.database import CustomIcon
 
-
 # Minimal valid PNG (1x1 transparent pixel)
 MINIMAL_PNG = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"

@@ -26,11 +26,10 @@ try:
 
     TWOFISH_AVAILABLE = True
 except ImportError:
-    TwofishCBC = None  # type: ignore[misc,assignment]
     TWOFISH_AVAILABLE = False
 
 if TYPE_CHECKING:
-    pass
+    from oxifish import TwofishCBC  # noqa: F811
 
 logger = logging.getLogger(__name__)
 

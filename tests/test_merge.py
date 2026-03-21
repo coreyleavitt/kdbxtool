@@ -2,8 +2,6 @@
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from kdbxtool import Database, MergeMode, MergeResult
 from kdbxtool.merge import DeletedObject, Merger
 
@@ -229,7 +227,7 @@ class TestMergeGroups:
         source_entry = source.root_group.create_entry(title="Trashed Entry")
         source.trash_entry(source_entry)
 
-        result = target.merge(source)
+        target.merge(source)
 
         # Trashed entry should not be merged
         found = target.find_entries(title="Trashed Entry", first=True)
@@ -270,7 +268,7 @@ class TestMergeHistory:
         target = Database.create(password="test")
         source = Database.create(password="test")
 
-        timestamp = datetime.now(UTC)
+        datetime.now(UTC)
 
         # Create entry with history in target
         target_entry = target.root_group.create_entry(title="Entry")
@@ -567,7 +565,6 @@ class TestMergeEdgeCases:
 
         # Create referenced entry in source
         main = source.root_group.create_entry(title="Main", password="secret123")
-        main_uuid = main.uuid
 
         # Create referencing entry
         ref_entry = source.root_group.create_entry(title="Reference")

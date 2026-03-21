@@ -500,9 +500,7 @@ class TestRevokeWithoutRotation:
         db_path = tmp_path / "revoke_no_rotate.kdbx"
         db.save(db_path)
 
-        db2 = Database.open(
-            db_path, password="password", challenge_response_provider=p2
-        )
+        db2 = Database.open(db_path, password="password", challenge_response_provider=p2)
         assert db2.enrolled_device_count == 1
         assert db2.find_entries(title="Secret")[0].password == "value"
 

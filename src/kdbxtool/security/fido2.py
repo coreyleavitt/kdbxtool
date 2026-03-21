@@ -65,11 +65,9 @@ try:
     FIDO2_AVAILABLE = True
 except ImportError:
     FIDO2_AVAILABLE = False
-    # Placeholder so subclass definitions parse at runtime when fido2 is absent
-    UserInteraction = object
 
 if TYPE_CHECKING:
-    pass
+    from fido2.client import UserInteraction
 
 logger = logging.getLogger(__name__)
 

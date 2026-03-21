@@ -373,9 +373,7 @@ def deserialize_device_entry(data: bytes) -> EnrolledDevice:
         or not isinstance(label, str)
         or not isinstance(device_id, str)
     ):
-        raise ValueError(
-            "Invalid device entry: 'type', 'label', and 'id' must be strings"
-        )
+        raise ValueError("Invalid device entry: 'type', 'label', and 'id' must be strings")
 
     if len(label) > MAX_LABEL_LENGTH:
         raise ValueError(

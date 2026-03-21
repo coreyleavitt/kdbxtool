@@ -840,14 +840,9 @@ class Database:
             raise DatabaseError("Database is not in KEK mode")
 
         # Ensure password or keyfile is set - can't have unprotected database
-        if (
-            self._password is None
-            and self._keyfile_data is None
-            and self._transformed_key is None
-        ):
+        if self._password is None and self._keyfile_data is None and self._transformed_key is None:
             raise DatabaseError(
-                "Cannot disable KEK mode without credentials set. "
-                "Call set_credentials() first."
+                "Cannot disable KEK mode without credentials set. Call set_credentials() first."
             )
 
         # Warn user about security implications

@@ -1,7 +1,9 @@
 """Tests for YubiKey HMAC-SHA1 challenge-response support."""
 
+import hashlib
+import hmac
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -16,7 +18,10 @@ from kdbxtool.security.kdf import derive_composite_key
 from kdbxtool.security.memory import SecureBytes
 from kdbxtool.security.yubikey import (
     HMAC_SHA1_RESPONSE_SIZE,
-    YUBIKEY_AVAILABLE,
+    YUBIKEY_HARDWARE_AVAILABLE,
+    ChallengeResponseProvider,
+    HardwareYubiKey,
+    MockYubiKey,
     YubiKeyConfig,
 )
 
@@ -28,17 +33,11 @@ class TestYubiKeyConfig:
         """Test default configuration values."""
         config = YubiKeyConfig()
         assert config.slot == 2
-        assert config.timeout_seconds == 15.0
 
     def test_custom_slot(self) -> None:
         """Test custom slot configuration."""
         config = YubiKeyConfig(slot=1)
         assert config.slot == 1
-
-    def test_custom_timeout(self) -> None:
-        """Test custom timeout configuration."""
-        config = YubiKeyConfig(timeout_seconds=30.0)
-        assert config.timeout_seconds == 30.0
 
     def test_custom_serial(self) -> None:
         """Test custom serial configuration."""
@@ -59,16 +58,6 @@ class TestYubiKeyConfig:
         """Test that slot 0 raises ValueError."""
         with pytest.raises(ValueError, match="slot must be 1 or 2"):
             YubiKeyConfig(slot=0)
-
-    def test_invalid_timeout_raises(self) -> None:
-        """Test that non-positive timeout raises ValueError."""
-        with pytest.raises(ValueError, match="Timeout must be positive"):
-            YubiKeyConfig(timeout_seconds=0)
-
-    def test_negative_timeout_raises(self) -> None:
-        """Test that negative timeout raises ValueError."""
-        with pytest.raises(ValueError, match="Timeout must be positive"):
-            YubiKeyConfig(timeout_seconds=-1.0)
 
 
 class TestHmacSha1ResponseSize:
@@ -185,10 +174,9 @@ class TestYubiKeyExceptions:
         assert "hmac-sha1" in str(error).lower()
 
     def test_yubikey_timeout_error(self) -> None:
-        """Test YubiKeyTimeoutError stores timeout."""
-        error = YubiKeyTimeoutError(timeout_seconds=30.0)
-        assert error.timeout_seconds == 30.0
-        assert "30" in str(error)
+        """Test YubiKeyTimeoutError message."""
+        error = YubiKeyTimeoutError()
+        assert "timed out" in str(error).lower()
         assert "touch" in str(error).lower()
 
     def test_yubikey_not_available_error(self) -> None:
@@ -201,7 +189,7 @@ class TestYubiKeyExceptions:
 class TestYubiKeyMocked:
     """Tests for YubiKey functions with mocked hardware."""
 
-    @patch("kdbxtool.security.yubikey.YUBIKEY_AVAILABLE", False)
+    @patch("kdbxtool.security.yubikey.YUBIKEY_HARDWARE_AVAILABLE", False)
     def test_list_yubikeys_not_available(self) -> None:
         """Test list_yubikeys raises when yubikey-manager not installed."""
         from kdbxtool.security.yubikey import list_yubikeys
@@ -209,7 +197,7 @@ class TestYubiKeyMocked:
         with pytest.raises(YubiKeyNotAvailableError):
             list_yubikeys()
 
-    @patch("kdbxtool.security.yubikey.YUBIKEY_AVAILABLE", False)
+    @patch("kdbxtool.security.yubikey.YUBIKEY_HARDWARE_AVAILABLE", False)
     def test_compute_challenge_response_not_available(self) -> None:
         """Test compute_challenge_response raises when not installed."""
         from kdbxtool.security.yubikey import compute_challenge_response
@@ -217,7 +205,7 @@ class TestYubiKeyMocked:
         with pytest.raises(YubiKeyNotAvailableError):
             compute_challenge_response(os.urandom(32))
 
-    @patch("kdbxtool.security.yubikey.YUBIKEY_AVAILABLE", False)
+    @patch("kdbxtool.security.yubikey.YUBIKEY_HARDWARE_AVAILABLE", False)
     def test_check_slot_configured_not_available(self) -> None:
         """Test check_slot_configured raises when not installed."""
         from kdbxtool.security.yubikey import check_slot_configured
@@ -242,7 +230,7 @@ class TestYubiKeyMocked:
 # Tests that require yubikey-manager to be installed for proper mocking
 # These are marked to skip if yubikey-manager is not available
 @pytest.mark.skipif(
-    not YUBIKEY_AVAILABLE,
+    not YUBIKEY_HARDWARE_AVAILABLE,
     reason="yubikey-manager not installed - cannot mock internal functions",
 )
 class TestYubiKeyWithManagerInstalled:
@@ -276,111 +264,303 @@ class TestYubiKeyWithManagerInstalled:
                 check_slot_configured(slot=2)
 
 
-class TestDatabaseApiYubiKey:
-    """Tests for Database API YubiKey integration."""
+class TestDatabaseApiWithProvider:
+    """Tests for Database API with ChallengeResponseProvider."""
 
-    def test_open_bytes_yubikey_not_available(self) -> None:
-        """Test Database.open_bytes raises when yubikey-manager not installed."""
+    def test_hardware_yubikey_not_available(self) -> None:
+        """Test HardwareYubiKey raises when yubikey-manager not installed."""
         import kdbxtool.security.yubikey as yk_module
 
+        original = yk_module.YUBIKEY_HARDWARE_AVAILABLE
+        try:
+            yk_module.YUBIKEY_HARDWARE_AVAILABLE = False
+            with pytest.raises(YubiKeyNotAvailableError):
+                HardwareYubiKey(slot=2)
+        finally:
+            yk_module.YUBIKEY_HARDWARE_AVAILABLE = original
+
+    def test_mock_yubikey_always_available(self) -> None:
+        """Test MockYubiKey works regardless of hardware availability."""
+        # MockYubiKey should always work - no hardware needed
+        mock = MockYubiKey.with_zero_secret(slot=1)
+        response = mock.challenge_response(b"test challenge")
+        assert len(response.data) == 20
+
+    def test_mock_yubikey_implements_provider_abc(self) -> None:
+        """Test MockYubiKey implements ChallengeResponseProvider."""
+        mock = MockYubiKey.with_zero_secret(slot=1)
+        assert isinstance(mock, ChallengeResponseProvider)
+        assert mock.slot == 1
+        assert mock.serial == 12345678
+
+    def test_open_bytes_with_mock_provider(self) -> None:
+        """Test Database.open_bytes with MockYubiKey provider."""
         from kdbxtool.database import Database
 
-        # Create a simple test database bytes
+        # Create a database with MockYubiKey
+        mock_provider = MockYubiKey.with_zero_secret(slot=1)
         db = Database.create(password="test")
-        db_bytes = db.to_bytes()
 
-        # Patch at the actual yubikey module where it's defined
-        original = yk_module.YUBIKEY_AVAILABLE
-        try:
-            yk_module.YUBIKEY_AVAILABLE = False
-            with pytest.raises(YubiKeyNotAvailableError):
-                Database.open_bytes(db_bytes, password="test", yubikey_slot=2)
-        finally:
-            yk_module.YUBIKEY_AVAILABLE = original
+        # Save with provider
+        db_bytes = db.to_bytes(challenge_response_provider=mock_provider)
 
-    def test_to_bytes_yubikey_not_available(self) -> None:
-        """Test Database.to_bytes raises when yubikey-manager not installed."""
-        import kdbxtool.security.yubikey as yk_module
+        # Open with same provider should work
+        db2 = Database.open_bytes(
+            db_bytes, password="test", challenge_response_provider=mock_provider
+        )
+        assert db2 is not None
 
+    def test_to_bytes_with_mock_provider(self) -> None:
+        """Test Database.to_bytes with MockYubiKey provider."""
         from kdbxtool.database import Database
 
+        mock_provider = MockYubiKey.with_numeric_secret(MockYubiKey.TEST_NUMERIC_SECRET, slot=2)
         db = Database.create(password="test")
 
-        original = yk_module.YUBIKEY_AVAILABLE
-        try:
-            yk_module.YUBIKEY_AVAILABLE = False
-            with pytest.raises(YubiKeyNotAvailableError):
-                db.to_bytes(yubikey_slot=2)
-        finally:
-            yk_module.YUBIKEY_AVAILABLE = original
-
-    def test_save_yubikey_not_available(self, tmp_path: "pytest.TempPathFactory") -> None:
-        """Test Database.save raises when yubikey-manager not installed."""
-        import kdbxtool.security.yubikey as yk_module
-        from pathlib import Path
-
-        from kdbxtool.database import Database
-
-        db = Database.create(password="test")
-        db_path = Path(str(tmp_path)) / "test.kdbx"
-
-        original = yk_module.YUBIKEY_AVAILABLE
-        try:
-            yk_module.YUBIKEY_AVAILABLE = False
-            with pytest.raises(YubiKeyNotAvailableError):
-                db.save(db_path, yubikey_slot=2)
-        finally:
-            yk_module.YUBIKEY_AVAILABLE = original
+        result = db.to_bytes(challenge_response_provider=mock_provider)
+        assert isinstance(result, bytes)
 
 
 @pytest.mark.skipif(
-    not YUBIKEY_AVAILABLE,
-    reason="yubikey-manager not installed - cannot mock internal functions",
+    not YUBIKEY_HARDWARE_AVAILABLE,
+    reason="yubikey-manager not installed - cannot test HardwareYubiKey",
 )
-class TestDatabaseApiYubiKeyMocked:
-    """Tests for Database API YubiKey integration with mocked hardware."""
+class TestHardwareYubiKeyProvider:
+    """Tests for HardwareYubiKey provider (requires yubikey-manager)."""
 
-    def test_open_and_save_with_yubikey(self, tmp_path: "pytest.TempPathFactory") -> None:
-        """Test Database open/save cycle with mocked YubiKey."""
+    def test_hardware_yubikey_creation(self) -> None:
+        """Test HardwareYubiKey can be created when hardware is available."""
+        provider = HardwareYubiKey(slot=2)
+        assert provider.slot == 2
+        # Serial is now the actual device serial, not the filter
+        assert provider.serial is not None or provider.serial is None
+
+    def test_hardware_yubikey_with_serial(self) -> None:
+        """Test HardwareYubiKey with specific serial number."""
+        # Get the actual serial of the connected device first
+        from kdbxtool.security.yubikey import list_yubikeys
+
+        devices = list_yubikeys()
+        if not devices or "serial" not in devices[0]:
+            pytest.skip("No YubiKey with serial available")
+
+        actual_serial = devices[0]["serial"]
+        provider = HardwareYubiKey(slot=1, serial=actual_serial)
+        assert provider.slot == 1
+        assert provider.serial == actual_serial
+
+    def test_hardware_yubikey_implements_provider_abc(self) -> None:
+        """Test HardwareYubiKey implements ChallengeResponseProvider."""
+        provider = HardwareYubiKey(slot=2)
+        assert isinstance(provider, ChallengeResponseProvider)
+
+
+class TestMockYubiKey:
+    """Tests for MockYubiKey implementation."""
+
+    def test_zero_secret_hmac(self) -> None:
+        """Test HMAC with zero secret produces correct output."""
+        mock = MockYubiKey.with_zero_secret(slot=1)
+        challenge = b"test challenge data here"
+        response = mock.challenge_response(challenge)
+
+        # Verify response is 20 bytes (HMAC-SHA1) wrapped in SecureBytes
+        assert len(response.data) == 20
+
+        # Verify HMAC is computed correctly
+        expected = hmac.new(MockYubiKey.ZERO_SECRET, challenge, hashlib.sha1).digest()
+        assert response.data == expected
+
+    def test_numeric_secret_hmac(self) -> None:
+        """Test HMAC with numeric secret produces correct output."""
+        mock = MockYubiKey.with_numeric_secret(MockYubiKey.TEST_NUMERIC_SECRET, slot=2)
+        challenge = b"another test challenge"
+        response = mock.challenge_response(challenge)
+
+        assert len(response.data) == 20
+
+        expected = hmac.new(MockYubiKey.TEST_NUMERIC_SECRET, challenge, hashlib.sha1).digest()
+        assert response.data == expected
+
+    def test_serial_number(self) -> None:
+        """Test mock serial number."""
+        mock = MockYubiKey.with_zero_secret(slot=1)
+        assert mock.serial == 12345678
+
+    def test_custom_serial(self) -> None:
+        """Test custom serial number."""
+        mock = MockYubiKey(slot=1, serial=99999999)
+        assert mock.serial == 99999999
+
+    def test_invalid_slot_raises(self) -> None:
+        """Test error on invalid slot number."""
+        with pytest.raises(ValueError, match="Slot must be 1 or 2"):
+            MockYubiKey(slot=3)
+
+    def test_custom_secret(self) -> None:
+        """Test MockYubiKey with custom secret."""
+        custom_secret = b"x" * 20
+        mock = MockYubiKey.with_secret(slot=1, secret=custom_secret)
+
+        challenge = b"test"
+        response = mock.challenge_response(challenge)
+        expected = hmac.new(custom_secret, challenge, hashlib.sha1).digest()
+        assert response.data == expected
+
+    def test_invalid_secret_length(self) -> None:
+        """Test error on invalid secret length."""
+        with pytest.raises(ValueError, match="must be exactly 20 bytes"):
+            MockYubiKey(slot=1, secret=b"too short")
+
+    def test_touch_callback(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test touch prompt is printed when simulate_touch=True."""
+        mock = MockYubiKey(slot=1, simulate_touch=True)
+        mock.challenge_response(b"test")
+        captured = capsys.readouterr()
+        assert "Touch your YubiKey" in captured.err
+
+    def test_no_touch_callback_by_default(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test touch prompt is not printed by default."""
+        mock = MockYubiKey(slot=1)  # simulate_touch=False by default
+        mock.challenge_response(b"test")
+        captured = capsys.readouterr()
+        assert "Touch your YubiKey" not in captured.err
+
+    def test_deterministic_response(self) -> None:
+        """Test same challenge produces same response."""
+        mock = MockYubiKey.with_zero_secret(slot=1)
+        challenge = b"deterministic test"
+        response1 = mock.challenge_response(challenge)
+        response2 = mock.challenge_response(challenge)
+        assert response1.data == response2.data
+
+    def test_different_challenges(self) -> None:
+        """Test different challenges produce different responses."""
+        mock = MockYubiKey.with_zero_secret(slot=1)
+        response1 = mock.challenge_response(b"challenge1")
+        response2 = mock.challenge_response(b"challenge2")
+        assert response1.data != response2.data
+
+    def test_different_slots_different_secrets(self) -> None:
+        """Test that different slots use different secrets by default."""
+        mock1 = MockYubiKey.with_zero_secret(slot=1)
+        mock2 = MockYubiKey.with_numeric_secret(MockYubiKey.TEST_NUMERIC_SECRET, slot=2)
+        challenge = b"test"
+
+        response1 = mock1.challenge_response(challenge)
+        response2 = mock2.challenge_response(challenge)
+
+        # Different secrets should produce different responses
+        assert response1.data != response2.data
+
+        # Verify secrets are as expected
+        expected1 = hmac.new(MockYubiKey.ZERO_SECRET, challenge, hashlib.sha1).digest()
+        expected2 = hmac.new(MockYubiKey.TEST_NUMERIC_SECRET, challenge, hashlib.sha1).digest()
+        assert response1.data == expected1
+        assert response2.data == expected2
+
+
+class TestMockYubiKeyDatabaseIntegration:
+    """Tests for Database API using MockYubiKey (no hardware required).
+
+    With the new ChallengeResponseProvider pattern, no patching is needed.
+    MockYubiKey can be used directly as a provider.
+    """
+
+    def test_create_and_open_with_mock_yubikey(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test creating and reopening a database with mock YubiKey."""
         from pathlib import Path
 
         from kdbxtool.database import Database
 
-        # Create a test database
-        db = Database.create(password="test")
+        provider = MockYubiKey.with_zero_secret(slot=1)
+        db_path = Path(str(tmp_path)) / "mock_yubikey_test.kdbx"
 
-        # Mock YubiKey response for save
-        mock_response = MagicMock()
-        mock_response.data = os.urandom(20)
+        # Create database
+        db = Database.create(password="testpassword")
+        db.root_group.create_entry(
+            title="Test Entry",
+            username="testuser",
+            password="testpass",
+        )
 
-        with patch("kdbxtool.database.compute_challenge_response") as mock_cr:
-            mock_cr.return_value = mock_response
+        # Save with mock YubiKey provider - no patching needed!
+        db.save(db_path, challenge_response_provider=provider)
 
-            # Save with YubiKey
-            db_path = Path(str(tmp_path)) / "yubikey_test.kdbx"
-            db.save(db_path, yubikey_slot=2)
+        # Read the database back with the same provider
+        db2 = Database.open(db_path, password="testpassword", challenge_response_provider=provider)
 
-            # Verify compute_challenge_response was called with master_seed
-            assert mock_cr.called
-            call_args = mock_cr.call_args
-            # First positional arg should be the 32-byte master_seed
-            assert len(call_args[0][0]) == 32
+        entries = db2.find_entries(title="Test Entry")
+        assert len(entries) == 1
+        assert entries[0].username == "testuser"
+        assert entries[0].password == "testpass"
 
-    def test_to_bytes_with_yubikey(self) -> None:
-        """Test Database.to_bytes with mocked YubiKey."""
+    def test_bytes_roundtrip_with_mock_yubikey(self) -> None:
+        """Test to_bytes/open_bytes cycle with mock YubiKey."""
         from kdbxtool.database import Database
 
-        db = Database.create(password="test")
+        provider = MockYubiKey.with_numeric_secret(MockYubiKey.TEST_NUMERIC_SECRET, slot=2)
 
-        mock_response = MagicMock()
-        mock_response.data = os.urandom(20)
+        # Create and serialize with mock YubiKey - no patching needed!
+        db = Database.create(password="testpassword")
+        db.root_group.create_entry(title="Roundtrip Test", username="user")
 
-        with patch("kdbxtool.database.compute_challenge_response") as mock_cr:
-            mock_cr.return_value = mock_response
-            result = db.to_bytes(yubikey_slot=1)
+        data = db.to_bytes(challenge_response_provider=provider)
 
-            assert isinstance(result, bytes)
-            assert mock_cr.called
-            # Verify YubiKeyConfig was passed with correct slot
-            config = mock_cr.call_args[0][1]
-            assert config.slot == 1
+        # Deserialize
+        db2 = Database.open_bytes(
+            data, password="testpassword", challenge_response_provider=provider
+        )
+
+        entries = db2.find_entries(title="Roundtrip Test")
+        assert len(entries) == 1
+
+    def test_wrong_provider_fails(self) -> None:
+        """Test that using wrong provider fails to decrypt."""
+        from kdbxtool.database import Database
+        from kdbxtool.exceptions import AuthenticationError
+
+        provider1 = MockYubiKey.with_zero_secret(slot=1)
+        provider2 = MockYubiKey.with_numeric_secret(MockYubiKey.TEST_NUMERIC_SECRET, slot=2)
+
+        # Create with provider 1
+        db = Database.create(password="testpassword")
+        data = db.to_bytes(challenge_response_provider=provider1)
+
+        # Try to open with provider 2 (different secret) - should fail
+        with pytest.raises(AuthenticationError):
+            Database.open_bytes(
+                data, password="testpassword", challenge_response_provider=provider2
+            )
+
+    def test_kdf_rotation_on_save(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Test that KDF salt is regenerated on save (YubiKey challenge rotation)."""
+        from pathlib import Path
+
+        from kdbxtool.database import Database
+
+        provider = MockYubiKey.with_zero_secret(slot=1)
+        db_path = Path(str(tmp_path)) / "rotation_test.kdbx"
+
+        # Create and save initial database
+        db = Database.create(password="testpassword")
+        db.root_group.create_entry(title="Original", username="user1")
+
+        db.save(db_path, challenge_response_provider=provider)
+
+        # Get the initial KDF salt
+        initial_salt = db.kdf_salt
+
+        # Modify and save again
+        db.root_group.create_entry(title="New Entry", username="user2")
+        db.save()
+
+        # Salt should have changed (rotation on save)
+        new_salt = db.kdf_salt
+        assert initial_salt != new_salt, "KDF salt should be rotated on save"
+
+        # Database should still be openable
+        db2 = Database.open(db_path, password="testpassword", challenge_response_provider=provider)
+
+        entries = db2.find_entries()
+        assert len(entries) == 2

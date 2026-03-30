@@ -19,11 +19,12 @@ Exception Hierarchy:
     │   ├── InvalidPasswordError
     │   ├── InvalidKeyFileError
     │   ├── MissingCredentialsError
-    │   └── YubiKeyError
-    │       ├── YubiKeyNotFoundError
-    │       ├── YubiKeySlotError
-    │       ├── YubiKeyTimeoutError
-    │       └── YubiKeyNotAvailableError
+    │   └── ChallengeResponseError
+    │       └── YubiKeyError
+    │           ├── YubiKeyNotFoundError
+    │           ├── YubiKeySlotError
+    │           ├── YubiKeyTimeoutError
+    │           └── YubiKeyNotAvailableError
     └── DatabaseError
         ├── EntryNotFoundError
         └── GroupNotFoundError
@@ -197,10 +198,23 @@ class MissingCredentialsError(CredentialError):
         super().__init__("At least one credential (password or keyfile) is required")
 
 
+# --- Challenge-Response Errors ---
+
+
+class ChallengeResponseError(CredentialError):
+    """Error during challenge-response authentication.
+
+    Base class for challenge-response related errors. These occur during
+    hardware-backed authentication operations (e.g., YubiKey, smart cards).
+
+    Implementations may raise subclasses with device-specific details.
+    """
+
+
 # --- YubiKey Errors ---
 
 
-class YubiKeyError(CredentialError):
+class YubiKeyError(ChallengeResponseError):
     """Error communicating with YubiKey.
 
     Base class for YubiKey-related errors. These occur during
@@ -238,10 +252,9 @@ class YubiKeyTimeoutError(YubiKeyError):
     was required but not received within the timeout period.
     """
 
-    def __init__(self, timeout_seconds: float = 15.0) -> None:
-        self.timeout_seconds = timeout_seconds
+    def __init__(self) -> None:
         super().__init__(
-            f"YubiKey operation timed out after {timeout_seconds}s. "
+            "YubiKey operation timed out. "
             "Touch may be required - try again and press the YubiKey button."
         )
 

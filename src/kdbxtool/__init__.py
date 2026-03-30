@@ -28,6 +28,7 @@ from importlib.metadata import version
 from .database import Database, DatabaseSettings
 from .exceptions import (
     AuthenticationError,
+    ChallengeResponseError,
     CorruptedDataError,
     CredentialError,
     CryptoError,
@@ -63,6 +64,7 @@ from .security.keyfile import (
     create_keyfile_bytes,
     parse_keyfile,
 )
+from .security.challenge_response import ChallengeResponseProvider
 from .security.yubikey import (
     YubiKeyConfig,
     check_slot_configured,
@@ -102,7 +104,8 @@ __all__ = [
     "create_keyfile",
     "create_keyfile_bytes",
     "parse_keyfile",
-    # YubiKey support
+    # Challenge-response / YubiKey support
+    "ChallengeResponseProvider",
     "YubiKeyConfig",
     "check_slot_configured",
     "list_yubikeys",
@@ -123,6 +126,7 @@ __all__ = [
     "InvalidKeyFileError",
     "MergeError",
     "MissingCredentialsError",
+    "ChallengeResponseError",
     "DatabaseError",
     "EntryNotFoundError",
     "GroupNotFoundError",

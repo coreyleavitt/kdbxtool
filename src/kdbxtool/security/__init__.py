@@ -4,11 +4,12 @@ This module contains all security-sensitive code including:
 - Secure memory handling (SecureBytes)
 - Cryptographic operations
 - Key derivation functions
-- YubiKey challenge-response support
+- Challenge-response authentication (YubiKey support)
 
 All code in this module should be audited carefully.
 """
 
+from .challenge_response import ChallengeResponseProvider
 from .crypto import (
     Cipher,
     CipherContext,
@@ -37,7 +38,9 @@ from .keyfile import (
 from .memory import SecureBytes
 from .yubikey import (
     HMAC_SHA1_RESPONSE_SIZE,
-    YUBIKEY_AVAILABLE,
+    YUBIKEY_HARDWARE_AVAILABLE,
+    HardwareYubiKey,
+    MockYubiKey,
     YubiKeyConfig,
     check_slot_configured,
     compute_challenge_response,
@@ -69,9 +72,12 @@ __all__ = [
     "create_keyfile",
     "create_keyfile_bytes",
     "parse_keyfile",
-    # YubiKey
+    # YubiKey / Challenge-Response
     "HMAC_SHA1_RESPONSE_SIZE",
-    "YUBIKEY_AVAILABLE",
+    "YUBIKEY_HARDWARE_AVAILABLE",
+    "ChallengeResponseProvider",
+    "HardwareYubiKey",
+    "MockYubiKey",
     "YubiKeyConfig",
     "check_slot_configured",
     "compute_challenge_response",
